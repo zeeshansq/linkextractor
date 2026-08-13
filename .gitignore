@@ -1,0 +1,140 @@
+# ==============================================================================
+# 🚀 DigiSkills Video Links Extractor - Git Ignore Configuration
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. 🔒 Environment Variables & Credentials (CRITICAL)
+# ------------------------------------------------------------------------------
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+# Ensure sample/template config is always tracked
+!.env.example
+
+# ------------------------------------------------------------------------------
+# 2. 🔑 Authentication, Browser Sessions & Cookies
+# ------------------------------------------------------------------------------
+.auth/
+*.session
+*.cookie
+
+# ------------------------------------------------------------------------------
+# 3. 🐍 Python Bytecode & Runtime Cache
+# ------------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ------------------------------------------------------------------------------
+# 4. 📦 Virtual Environments
+# ------------------------------------------------------------------------------
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+bin/
+include/
+Lib/
+Scripts/
+pyvenv.cfg
+
+# ------------------------------------------------------------------------------
+# 5. 📥 Extracted Data, Cache & Downloaded Media Files
+# ------------------------------------------------------------------------------
+# Generated data exports & cache
+exports/
+cache/
+download page/
+
+# Video, audio and temporary download fragments
+*.mp4
+*.m4a
+*.mkv
+*.webm
+*.part
+*.ytdl
+*.temp.*
+*.old
+
+# ------------------------------------------------------------------------------
+# 6. 🎭 Playwright & Browser Automation Artifacts
+# ------------------------------------------------------------------------------
+.playwright/
+pw-browsers/
+test-results/
+playwright-report/
+
+# ------------------------------------------------------------------------------
+# 7. 🧪 Testing, Linters & Type Checkers
+# ------------------------------------------------------------------------------
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.ruff_cache/
+.mypy_cache/
+
+# ------------------------------------------------------------------------------
+# 8. 💻 IDE, Editor & OS Specific Files
+# ------------------------------------------------------------------------------
+# VS Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# JetBrains PyCharm / IntelliJ
+.idea/
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+
+# Log files
+*.log

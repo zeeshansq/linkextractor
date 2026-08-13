@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DigiSkills Link Extractor</title>
+    <meta name="description" content="Automated DigiSkills LMS YouTube video and topic collector.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="/web/styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header / Navbar -->
+        <header class="navbar">
+            <div class="brand">
+                <div class="brand-icon">
+                    <i class="fa-solid fa-play"></i>
+                </div>
+                <div class="brand-text">
+                    <h1>DigiSkills <span>Link Extractor</span></h1>
+                    <p class="tagline">Automated LMS YouTube Video &amp; Topic Collector</p>
+                </div>
+            </div>
+            <div class="session-bar">
+                <!-- Session Status Badge -->
+                <div class="session-badge" id="sessionStatus">
+                    <span class="status-dot" id="statusDot"></span>
+                    <span id="sessionText">Checking session...</span>
+                </div>
+                <!-- Action Buttons -->
+                <div class="session-actions">
+                    <button class="btn btn-sm btn-primary" id="btnAutoLogin" title="Auto-login using .env credentials">
+                        <i class="fa-solid fa-key"></i> Auto Login
+                    </button>
+                    <button class="btn btn-sm btn-outline" id="btnInteractiveLogin" title="Open browser to log in manually">
+                        <i class="fa-solid fa-arrow-right-to-bracket"></i> Login Browser
+                    </button>
+                    <button class="btn btn-sm btn-danger-outline" id="btnLogout" title="Destroy session and logout" style="display:none;">
+                        <i class="fa-solid fa-right-from-bracket"></i> Logout
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Control Panel -->
+            <section class="control-card glass-panel">
+                <div class="control-grid">
+                    <!-- Course Selection -->
+                    <div class="control-group">
+                        <label for="courseSelect"><i class="fa-solid fa-graduation-cap"></i> Select Target Course</label>
+                        <div class="input-with-button">
+                            <select id="courseSelect" class="form-select">
+                                <option value="">-- Click "Fetch Courses" after login --</option>
+                            </select>
+                            <button id="btnFetchCourses" class="btn btn-secondary">
+                                <i class="fa-solid fa-arrows-rotate"></i> Fetch Courses
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Week Selection -->
+                    <div class="control-group">
+                        <label for="weekSelect"><i class="fa-solid fa-calendar-week"></i> Select Target Week</label>
+                        <div class="input-with-button">
+                            <select id="weekSelect" class="form-select">
+                                <option value="ALL">All Weeks (Default)</option>
+                            </select>
+                            <button id="btnFetchWeeks" class="btn btn-secondary">
+                                <i class="fa-solid fa-layer-group"></i> Fetch Weeks
+                            </button>
+                        </div>
+                    </div>
+
+
+                    <!-- Download Quality Selection -->
+                    <div class="control-group">
+                        <label for="qualitySelect"><i class="fa-solid fa-sliders"></i> Download Quality</label>
+                        <select id="qualitySelect" class="form-select">
+                            <option value="720p" selected>720p HD (Default MP4)</option>
+                            <option value="best">Best Quality (MP4)</option>
+                            <option value="1080p">1080p Full HD (MP4)</option>
+                            <option value="480p">480p SD (Fast MP4)</option>
+                            <option value="360p">360p Low (Compact MP4)</option>
+                            <option value="audio">Audio Only (M4A)</option>
+                        </select>
+                    </div>
+
+                    <!-- Direct URL Input -->
+                    <div class="control-group">
+                        <label for="customCourseUrl"><i class="fa-solid fa-link"></i> Or Direct Course URL</label>
+                        <input type="text" id="customCourseUrl" class="form-control" placeholder="https://lms.digiskills.pk/CourseWebsite.aspx" />
+                    </div>
+
+                    <!-- Extraction Mode Switcher -->
+                    <div class="control-group">
+                        <label><i class="fa-solid fa-microchip"></i> Extraction Mode</label>
+                        <div class="mode-toggle-container">
+                            <label class="mode-toggle-btn active" id="modeCacheBtn" title="Instant load from local cache with live fallback">
+                                <input type="radio" name="extractionMode" value="cache" id="modeCacheRadio" checked />
+                                <i class="fa-solid fa-bolt" style="color: #c084fc;"></i> <span>Smart Cache</span>
+                            </label>
+                            <label class="mode-toggle-btn" id="modeLiveBtn" title="Force 100% live scraping from DigiSkills LMS">
+                                <input type="radio" name="extractionMode" value="live" id="modeLiveRadio" />
+                                <i class="fa-solid fa-globe" style="color: #ec4899;"></i> <span>Force Live</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Action Buttons -->
+                    <div class="control-group actions-group">
+                        <button id="btnStartExtract" class="btn btn-primary btn-glow">
+                            <i class="fa-solid fa-bolt"></i> Start Extraction
+                        </button>
+                        <button id="btnStopExtract" class="btn btn-danger" disabled>
+                            <i class="fa-solid fa-stop"></i> Stop
+                        </button>
+                    </div>
+                </div>
+
+
+                <!-- Progress Bar -->
+                <div class="progress-section" id="progressSection" style="display: none;">
+                    <div class="progress-info">
+                        <span id="progressMessage"><i class="fa-solid fa-spinner fa-spin"></i> Initializing...</span>
+                        <span id="progressSpeed" class="speed-badge"><i class="fa-solid fa-gauge-high"></i> <span id="speedVal">0.0s/topic</span></span>
+                        <span id="progressPercent">0%</span>
+                    </div>
+                    <div class="progress-bar-track">
+                        <div class="progress-bar-fill" id="progressBarFill" style="width: 0%;"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Metrics Grid -->
+            <section class="metrics-grid">
+                <div class="metric-card glass-panel">
+                    <div class="metric-icon blue"><i class="fa-solid fa-list-check"></i></div>
+                    <div class="metric-data">
+                        <span class="metric-value" id="statTotalLectures">0</span>
+                        <span class="metric-label">Total Topics</span>
+                    </div>
+                </div>
+                <div class="metric-card glass-panel">
+                    <div class="metric-icon green"><i class="fa-brands fa-youtube"></i></div>
+                    <div class="metric-data">
+                        <span class="metric-value" id="statYoutubeFound">0</span>
+                        <span class="metric-label">YouTube Videos</span>
+                    </div>
+                </div>
+                <div class="metric-card glass-panel">
+                    <div class="metric-icon purple"><i class="fa-solid fa-book-open"></i></div>
+                    <div class="metric-data">
+                        <span class="metric-value" id="statCourseName">None</span>
+                        <span class="metric-label">Active Course</span>
+                    </div>
+                </div>
+                <div class="metric-card glass-panel">
+                    <div class="metric-icon pink"><i class="fa-solid fa-clock"></i></div>
+                    <div class="metric-data">
+                        <span class="metric-value" id="statExtractStatus">Idle</span>
+                        <span class="metric-label">Status / ETA</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Data Table Section -->
+            <section class="table-card glass-panel">
+                <!-- Filter Pills Toolbar -->
+                <div class="filter-pills-bar">
+                    <div class="pill-group">
+                        <button class="filter-pill active" data-filter="all" id="pillAll">
+                            <i class="fa-solid fa-list"></i> All Topics (<span id="pillAllCount">0</span>)
+                        </button>
+                        <button class="filter-pill" data-filter="video" id="pillVideo">
+                            <i class="fa-brands fa-youtube" style="color: #ff4747;"></i> Videos Only (<span id="pillVideoCount">0</span>)
+                        </button>
+                        <button class="filter-pill" data-filter="quiz" id="pillQuiz">
+                            <i class="fa-solid fa-file-pen" style="color: #fbbf24;"></i> Quizzes &amp; Text (<span id="pillQuizCount">0</span>)
+                        </button>
+                        <button class="filter-pill" data-filter="locked" id="pillLocked">
+                            <i class="fa-solid fa-lock" style="color: #9ca3af;"></i> Locked Weeks (<span id="pillLockedCount">0</span>)
+                        </button>
+                    </div>
+
+                    <!-- Batch Selection Action Bar -->
+                    <div class="batch-actions-bar" id="batchActionsBar" style="display: none;">
+                        <span class="batch-count"><strong id="selectedCount">0</strong> Selected</span>
+                        <button class="btn btn-sm btn-primary" id="btnDownloadSelectedMp4">
+                            <i class="fa-solid fa-file-arrow-down"></i> Download Selected MP4s
+                        </button>
+                        <button class="btn btn-sm btn-outline" id="btnCopySelected">
+                            <i class="fa-solid fa-copy"></i> Copy Selected Links
+                        </button>
+                        <button class="btn btn-sm btn-outline" id="btnCopyFormatted">
+                            <i class="fa-solid fa-code"></i> Copy as Markdown
+                        </button>
+                    </div>
+                </div>
+
+                <div class="table-header">
+                    <h2><i class="fa-solid fa-table-list"></i> Extracted Lectures (<span id="tableCount">0</span>)</h2>
+                    <div class="table-actions">
+                        <input type="text" id="tableSearch" class="form-control form-control-sm" placeholder="Search topic titles, URLs, or overview..." />
+                        <button id="btnOpenMultiLinkModal" class="btn btn-sm btn-primary" title="Paste Custom YouTube Video Links">
+                            <i class="fa-solid fa-cloud-arrow-down"></i> Multi-Link Downloader
+                        </button>
+                        <button id="btnOpenDownloadsFolder" class="btn btn-sm btn-outline" title="Open Local Downloads Folder">
+                            <i class="fa-solid fa-folder-open"></i> Downloads Folder
+                        </button>
+                        <button id="btnCopyAll" class="btn btn-sm btn-outline">
+                            <i class="fa-solid fa-copy"></i> Copy All Links
+                        </button>
+                        <div class="export-dropdown">
+                            <button class="btn btn-sm btn-success dropdown-trigger" id="exportDropdownBtn">
+                                <i class="fa-solid fa-download"></i> Export Data <i class="fa-solid fa-chevron-down"></i>
+                            </button>
+                            <div class="dropdown-menu" id="exportDropdownMenu">
+                                <a href="#" id="exportTxt"><i class="fa-solid fa-file-lines"></i> Download TXT Report (.txt)</a>
+                                <a href="#" id="exportCsv"><i class="fa-solid fa-file-csv"></i> Download CSV (.csv)</a>
+                                <a href="#" id="exportExcel"><i class="fa-solid fa-file-excel"></i> Download Excel (.xlsx)</a>
+                                <a href="#" id="exportJson"><i class="fa-solid fa-file-code"></i> Download JSON (.json)</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="table-wrapper">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th style="width: 40px; text-align: center;">
+                                    <input type="checkbox" id="selectAllCheck" title="Select / Deselect All Rows" />
+                                </th>
+                                <th style="width: 45px; text-align: center;">#</th>
+                                <th style="width: 100px;">Week</th>
+                                <th>Lecture Topic &amp; Overview</th>
+                                <th style="width: 320px;">YouTube Video Link</th>
+                                <th style="width: 85px; text-align: center;">Duration</th>
+                                <th style="width: 140px; text-align: center;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="lecturesTableBody">
+                            <tr class="empty-row">
+                                <td colspan="7">
+                                    <div class="empty-state">
+                                        <i class="fa-solid fa-video-slash"></i>
+                                        <p>No lecture links extracted yet.</p>
+                                        <small>Select a course &amp; week above, then click "Start Extraction".</small>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+
+        <!-- Video Preview Modal Container -->
+        <div id="videoPreviewModal" class="video-modal-backdrop" style="display: none;">
+            <div class="video-modal-card">
+                <div class="video-modal-header">
+                    <div class="modal-title-wrap">
+                        <span class="yt-badge" id="modalWeekBadge">Week 01</span>
+                        <h3 id="modalTopicTitle">Topic Title</h3>
+                    </div>
+                    <button id="modalCloseBtn" class="modal-close-btn">&times;</button>
+                </div>
+                <div class="video-modal-body">
+                    <div class="iframe-container" id="modalIframeContainer">
+                        <!-- Dynamic YouTube Iframe -->
+                    </div>
+                    <div class="video-modal-meta">
+                        <div class="meta-row">
+                            <span class="meta-label"><i class="fa-brands fa-youtube" style="color: #ff0000;"></i> YouTube Link:</span>
+                            <a id="modalYtLink" href="#" target="_blank" class="yt-link">https://www.youtube.com/...</a>
+                            <button id="modalCopyBtn" class="btn btn-sm btn-outline"><i class="fa-solid fa-copy"></i> Copy Link</button>
+                        </div>
+                        <div class="meta-description" id="modalDescription">
+                            <!-- Topic Overview Description -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Overwrite Confirmation Modal -->
+        <div id="overwriteModal" class="video-modal-backdrop" style="display: none;">
+            <div class="video-modal-card" style="max-width: 500px;">
+                <div class="video-modal-header">
+                    <div class="modal-title-wrap">
+                        <span class="yt-badge" style="background: rgba(245, 158, 11, 0.2); color: #f59e0b;"><i class="fa-solid fa-triangle-exclamation"></i> Warning</span>
+                        <h3>File Already Exists</h3>
+                    </div>
+                    <button id="overwriteCloseBtn" class="modal-close-btn">&times;</button>
+                </div>
+                <div class="video-modal-body" style="padding: 20px;">
+                    <p id="overwriteMessage" style="font-size: 0.95rem; color: var(--text-secondary); margin-bottom: 18px; line-height: 1.5;">
+                        The MP4 video file already exists on disk.
+                    </p>
+                    <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                        <button id="btnOverwriteSkip" class="btn btn-secondary">Skip Existing</button>
+                        <button id="btnOverwriteConfirm" class="btn btn-danger"><i class="fa-solid fa-rotate-right"></i> Overwrite File</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Download Progress Modal -->
+        <div id="downloadProgressModal" class="video-modal-backdrop" style="display: none;">
+            <div class="video-modal-card download-modal-card">
+                <div class="video-modal-header">
+                    <div class="modal-title-wrap">
+                        <span class="yt-badge" style="background: rgba(99, 102, 241, 0.2); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.4);">
+                            <i class="fa-solid fa-cloud-arrow-down"></i> <span id="dlModalTypeBadge">Downloading MP4</span>
+                        </span>
+                        <h3 id="dlModalTitle">Downloading Lecture Video</h3>
+                    </div>
+                    <button id="dlModalCloseBtn" class="modal-close-btn">&times;</button>
+                </div>
+                <div class="video-modal-body" style="padding: 24px;">
+                    <!-- Active File Info -->
+                    <div class="dl-active-file-info">
+                        <div class="dl-file-name" id="dlModalFileName">Topic 001 - Course Introduction.mp4</div>
+                        <div class="dl-file-meta" id="dlModalMetaInfo">
+                            <span><i class="fa-solid fa-folder"></i> <span id="dlModalCourseFolder">Course</span></span>
+                            <span><i class="fa-solid fa-layer-group"></i> <span id="dlModalWeekFolder">Week 01</span></span>
+                        </div>
+                    </div>
+
+                    <!-- Premium Animated Progress Bar -->
+                    <div class="dl-progress-section">
+                        <div class="dl-progress-header">
+                            <span id="dlModalStatusText"><i class="fa-solid fa-spinner fa-spin"></i> Initializing download stream...</span>
+                            <span id="dlModalPercentText" class="dl-percent-badge">0%</span>
+                        </div>
+                        <div class="dl-progress-track">
+                            <div id="dlModalProgressBarFill" class="dl-progress-fill" style="width: 0%;">
+                                <div class="dl-progress-shimmer"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Download Metrics Cards -->
+                    <div class="dl-metrics-grid">
+                        <div class="dl-metric-chip">
+                            <i class="fa-solid fa-gauge-high" style="color: #38bdf8;"></i>
+                            <div>
+                                <span class="chip-label">Speed</span>
+                                <span class="chip-val" id="dlModalSpeed">0.0 MB/s</span>
+                            </div>
+                        </div>
+                        <div class="dl-metric-chip">
+                            <i class="fa-solid fa-hard-drive" style="color: #a855f7;"></i>
+                            <div>
+                                <span class="chip-label">Downloaded</span>
+                                <span class="chip-val" id="dlModalSize">0 MB / 0 MB</span>
+                            </div>
+                        </div>
+                        <div class="dl-metric-chip">
+                            <i class="fa-solid fa-stopwatch" style="color: #f43f5e;"></i>
+                            <div>
+                                <span class="chip-label">ETA</span>
+                                <span class="chip-val" id="dlModalEta">Calculating...</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Batch Multi-Item Progress Indicator -->
+                    <div id="dlBatchProgressWrap" style="display: none; margin-top: 16px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.1);">
+                        <div style="display: flex; justify-content: space-between; font-size: 0.85rem; color: #94a3b8; margin-bottom: 6px;">
+                            <span>Overall Batch Progress</span>
+                            <span id="dlBatchCounter">1 / 10 Videos</span>
+                        </div>
+                        <div class="dl-progress-track" style="height: 8px;">
+                            <div id="dlBatchProgressBarFill" class="dl-progress-fill" style="width: 0%; background: linear-gradient(90deg, #10b981, #3b82f6);"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Multi-Link Batch Input Modal -->
+        <div id="multiLinkModal" class="video-modal-backdrop" style="display: none;">
+            <div class="video-modal-card" style="max-width: 650px; width: 92%;">
+                <div class="video-modal-header">
+                    <div class="modal-title-wrap">
+                        <span class="yt-badge" style="background: rgba(99, 102, 241, 0.2); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.4);">
+                            <i class="fa-solid fa-list-check"></i> Multi-Link Downloader
+                        </span>
+                        <h3>Paste Custom YouTube Video URLs</h3>
+                    </div>
+                    <button id="multiLinkCloseBtn" class="modal-close-btn">&times;</button>
+                </div>
+                <div class="video-modal-body" style="padding: 20px;">
+                    <div style="margin-bottom: 14px;">
+                        <label style="font-size: 0.85rem; color: #94a3b8; margin-bottom: 6px; display: block;">
+                            Enter YouTube URLs (one URL per line):
+                        </label>
+                        <textarea id="multiLinkTextArea" class="form-control" rows="6" placeholder="https://www.youtube.com/watch?v=CmVkzhiHSWw&#10;https://www.youtube.com/watch?v=8FocZfKN67g&#10;https://www.youtube.com/watch?v=xBORP6maPYI" style="font-family: monospace; font-size: 13px;"></textarea>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 18px;">
+                        <div>
+                            <label style="font-size: 0.8rem; color: #94a3b8; display: block; margin-bottom: 4px;">Target Course Folder</label>
+                            <input type="text" id="multiLinkCourseFolder" class="form-control form-control-sm" placeholder="Custom Course" value="Downloaded Videos" />
+                        </div>
+                        <div>
+                            <label style="font-size: 0.8rem; color: #94a3b8; display: block; margin-bottom: 4px;">Target Week Folder</label>
+                            <input type="text" id="multiLinkWeekFolder" class="form-control form-control-sm" placeholder="Week 01" value="Batch Downloads" />
+                        </div>
+                    </div>
+
+                    <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                        <button id="btnMultiLinkCancel" class="btn btn-secondary">Cancel</button>
+                        <button id="btnMultiLinkStart" class="btn btn-primary btn-glow">
+                            <i class="fa-solid fa-cloud-arrow-down"></i> Add to Download Queue
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modern Floating Download Manager Trigger Widget -->
+        <button id="floatingDlManagerBtn" class="floating-dl-btn" title="Open Download Manager Drawer">
+            <i class="fa-solid fa-cloud-arrow-down"></i>
+            <span>Downloads</span>
+            <span id="dlManagerActiveBadge" class="dl-badge-count">0</span>
+        </button>
+
+        <!-- Modern Download Manager Slide-over Drawer / Panel -->
+        <div id="downloadManagerDrawer" class="dl-drawer-backdrop" style="display: none;">
+            <div class="dl-drawer-panel">
+                <div class="dl-drawer-header">
+                    <div class="dl-drawer-title">
+                        <i class="fa-solid fa-cloud-arrow-down" style="color: #a855f7;"></i>
+                        <div>
+                            <h3>Download Manager</h3>
+                            <small><span id="drawerActiveCount">0</span> active &bull; <span id="drawerTotalCount">0</span> total queued</small>
+                        </div>
+                    </div>
+                    <div class="dl-drawer-actions">
+                        <button id="btnDrawerRefresh" class="btn btn-sm btn-outline" title="Refresh & Scan Disk Downloads"><i class="fa-solid fa-rotate"></i></button>
+                        <button id="btnDrawerOpenFolder" class="btn btn-sm btn-outline" title="Open Downloads Folder"><i class="fa-solid fa-folder-open"></i></button>
+                        <button id="btnDrawerClearCompleted" class="btn btn-sm btn-outline" title="Clear Completed"><i class="fa-solid fa-broom"></i></button>
+                        <button id="btnDrawerClose" class="modal-close-btn">&times;</button>
+                    </div>
+                </div>
+
+                <!-- Global Stats Banner -->
+                <div class="dl-drawer-stats">
+                    <div class="stat-box">
+                        <span class="stat-lbl">Active Speed</span>
+                        <span class="stat-val" id="drawerSpeedVal">0.0 MB/s</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="stat-lbl">Queue Status</span>
+                        <span class="stat-val" id="drawerQueueVal">0 / 0</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="stat-lbl">Downloaded</span>
+                        <span class="stat-val" id="drawerTotalDownloaded">0 MB</span>
+                    </div>
+                </div>
+
+                <!-- Active Downloads Queue Container -->
+                <div class="dl-drawer-body">
+                    <div class="dl-section-label"><i class="fa-solid fa-spinner fa-spin" style="color: #6366f1;"></i> Active Queue &amp; Progress</div>
+                    <div id="drawerActiveQueue" class="drawer-queue-list">
+                        <div class="queue-empty-state">
+                            <i class="fa-solid fa-download"></i>
+                            <p>No active downloads in queue.</p>
+                            <small>Click "⬇ MP4" or "Multi-Link Downloader" to queue videos.</small>
+                        </div>
+                    </div>
+
+                    <div class="dl-section-label" style="margin-top: 24px;"><i class="fa-solid fa-circle-check" style="color: #22c55e;"></i> Completed Downloads</div>
+                    <div id="drawerCompletedQueue" class="drawer-queue-list">
+                        <div class="queue-empty-state" style="padding: 20px;">
+                            <small>Completed downloads will appear here.</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>DigiSkills Video Links Extractor &bull; Built with Python, Playwright &amp; FastAPI</p>
+        </footer>
+    </div>
+
+    <script src="/web/app.js"></script>
+</body>
+
+</html>
