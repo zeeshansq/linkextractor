@@ -250,8 +250,8 @@ Link Extractor/
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-username/digiskills-link-extractor.git
-cd digiskills-link-extractor
+git clone https://github.com/zeeshansq/linkextractor.git
+cd linkextractor
 
 # 2. Create Python virtual environment
 python -m venv venv
@@ -450,10 +450,10 @@ I specialize in architecting robust, resilient, and enterprise-grade Python soft
 
 ### 📬 Connect With Me
 
-[![GitHub](https://img.shields.io/badge/GitHub-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/)
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://linkedin.com/)
-[![Email](https://img.shields.io/badge/Email-D14836?style=for-the-badge&logo=gmail&logoColor=white)](mailto:your-email@example.com)
-[![Portfolio](https://img.shields.io/badge/Portfolio-2563EB?style=for-the-badge&logo=google-chrome&logoColor=white)](https://your-portfolio-link.com)
+[![GitHub](https://img.shields.io/badge/GitHub-zeeshansq-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/zeeshansq)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-zeeshansq-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/zeeshansq)
+[![WhatsApp](https://img.shields.io/badge/WhatsApp-%2B92_315_5754436-25D366?style=for-the-badge&logo=whatsapp&logoColor=white)](https://wa.me/923155754436)
+[![Email](https://img.shields.io/badge/Email-zeeshan.shabbirqureshi%40gmail.com-D14836?style=for-the-badge&logo=gmail&logoColor=white)](mailto:zeeshan.shabbirqureshi@gmail.com)
 
 <br/>
 
