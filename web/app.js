@@ -63,9 +63,78 @@ document.addEventListener("DOMContentLoaded", () => {
     let currentFilter = "all";
     let eventSource = null;
     let extractionStartTime = null;
+    let downloadedDiskFiles = [];
 
-    // Check session status on page load
+    function cleanCourseTitle(title) {
+        if (!title) return "";
+        return title.replace(/\s*\((?:Week|DSTP).*?\)/gi, '').trim();
+    }
+
+    function sanitizeTitleForCompare(str) {
+        if (!str) return "";
+        return str.toLowerCase().replace(/[^a-z0-9]/g, '');
+    }
+
+    function isLectureDownloaded(l, index) {
+        if (!l) return false;
+        if (l.is_downloaded === true) return true;
+
+        const currentCourse = (l.course_name || (courseSelect && courseSelect.selectedIndex >= 0 ? courseSelect.options[courseSelect.selectedIndex].text : "") || "").trim();
+        const cleanCourse = cleanCourseTitle(currentCourse).toLowerCase();
+        const week = (l.week || "Week 01").toLowerCase();
+        const topicTitle = (l.topic_title || "").toLowerCase();
+        const lecNum = l.lecture_number || (index !== undefined ? index + 1 : null);
+
+        return downloadedDiskFiles.some(f => {
+            const fName = (f.file_name || "").toLowerCase();
+            const fCourse = (f.course_name || "").toLowerCase();
+            const fWeek = (f.week || "").toLowerCase();
+
+            // 1. Check Topic number prefix e.g. "Topic 001" or "Topic 1"
+            if (lecNum !== null) {
+                const numPadded = `topic ${lecNum.toString().padStart(3, '0')}`.toLowerCase();
+                const numSimple = `topic ${lecNum}`.toLowerCase();
+                if (fName.startsWith(numPadded) || fName.startsWith(numSimple)) {
+                    if (fWeek === week || fCourse.includes(cleanCourse) || cleanCourse.includes(fCourse) || !cleanCourse) {
+                        return true;
+                    }
+                }
+            }
+
+            // 2. Check title slug substring
+            const cleanTitleSlug = sanitizeTitleForCompare(topicTitle);
+            const fNameSlug = sanitizeTitleForCompare(fName);
+            if (cleanTitleSlug && cleanTitleSlug.length > 5 && fNameSlug.includes(cleanTitleSlug)) {
+                if (fWeek === week || !cleanCourse || fCourse.includes(cleanCourse) || cleanCourse.includes(fCourse)) {
+                    return true;
+                }
+            }
+
+            return false;
+        });
+    }
+
+    async function syncDownloadedFiles() {
+        try {
+            const res = await fetch("/api/scan-downloads-folder");
+            const data = await res.json();
+            if (data.status === "success" && Array.isArray(data.files)) {
+                downloadedDiskFiles = data.files;
+                if (extractedLectures && extractedLectures.length > 0) {
+                    renderTable();
+                }
+                if (window.globalDownloadQueue) {
+                    window.globalDownloadQueue.syncDiskDownloads();
+                }
+            }
+        } catch (e) {
+            console.warn("Failed to sync downloads folder:", e);
+        }
+    }
+
+    // Check session status and sync existing downloaded files on page load
     checkSessionStatus();
+    syncDownloadedFiles();
 
     // Logout Action
     if (btnLogout) {
@@ -107,15 +176,44 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    let loginPollInterval = null;
+
     // Launch Interactive Browser Login
     btnInteractiveLogin.addEventListener("click", () => {
-        showLoginModal();
+        showLoginModal(true);
     });
 
-    function showLoginModal() {
+    async function launchBrowserLogin() {
+        const statusEl = document.getElementById("loginModalStatusText");
+        const spinnerEl = document.getElementById("loginModalSpinner");
+        if (statusEl) statusEl.textContent = "Launching Chromium browser window...";
+        if (spinnerEl) spinnerEl.className = "fa-solid fa-spinner fa-spin";
+        try {
+            const res = await fetch("/api/login", { method: "POST" });
+            const data = await res.json();
+            if (statusEl) {
+                if (data.status === "success") {
+                    statusEl.textContent = "Browser window opened! Sign in to DigiSkills, then your session will be detected automatically.";
+                } else {
+                    statusEl.textContent = data.message || "Failed to launch login window.";
+                }
+            }
+        } catch (err) {
+            if (statusEl) statusEl.textContent = "Error launching browser: " + err;
+        }
+    }
+
+    function showLoginModal(autoLaunch = true) {
         // Remove existing modal if any
         const existing = document.getElementById("loginModal");
-        if (existing) existing.remove();
+        if (existing) {
+            if (loginPollInterval) clearInterval(loginPollInterval);
+            existing.remove();
+        }
+
+        if (autoLaunch) {
+            launchBrowserLogin();
+        }
 
         const modal = document.createElement("div");
         modal.id = "loginModal";
@@ -123,65 +221,155 @@ document.addEventListener("DOMContentLoaded", () => {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0,0,0,0.75); z-index: 9999;
             display: flex; align-items: center; justify-content: center;
-            backdrop-filter: blur(4px);
+            backdrop-filter: blur(6px);
         `;
         modal.innerHTML = `
             <div style="
-                background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+                background: linear-gradient(135deg, #131b2e 0%, #1e1b4b 100%);
                 border: 1px solid rgba(168,139,250,0.4);
-                border-radius: 16px; padding: 32px; max-width: 520px; width: 90%;
-                box-shadow: 0 25px 50px rgba(0,0,0,0.6);
-                color: #e2e8f0; position: relative;
+                border-radius: 18px; padding: 28px; max-width: 540px; width: 92%;
+                box-shadow: 0 25px 60px rgba(0,0,0,0.7);
+                color: #e2e8f0; position: relative; font-family: 'Inter', sans-serif;
             ">
-                <button onclick="document.getElementById('loginModal').remove()" style="
-                    position: absolute; top: 12px; right: 16px; background: none; border: none;
-                    color: #94a3b8; font-size: 20px; cursor: pointer;
+                <button id="btnCloseLoginModal" style="
+                    position: absolute; top: 14px; right: 16px; background: none; border: none;
+                    color: #94a3b8; font-size: 22px; cursor: pointer; line-height: 1;
                 ">&times;</button>
-                <h2 style="margin: 0 0 8px; color: #a78bfa; font-size: 20px;">
-                    <i class="fa-solid fa-arrow-right-to-bracket"></i> Login to DigiSkills
-                </h2>
-                <p style="color: #94a3b8; margin: 0 0 20px; font-size: 14px;">
-                    Due to Windows security restrictions, the login browser must be launched from your terminal or by double-clicking the batch file.
-                </p>
-                
-                <div style="background: rgba(168,139,250,0.1); border: 1px solid rgba(168,139,250,0.3); border-radius: 10px; padding: 16px; margin-bottom: 16px;">
-                    <p style="margin: 0 0 10px; font-weight: 600; color: #c4b5fd; font-size: 14px;">
-                        ✅ Option A — Double-click the batch file:
-                    </p>
-                    <code style="background: rgba(0,0,0,0.4); border-radius: 6px; padding: 10px 14px; display: block; font-size: 13px; color: #86efac; word-break: break-all;">
-                        c:\\py-projects\\Link Extractor\\login.bat
-                    </code>
+
+                <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                    <div style="width: 40px; height: 40px; border-radius: 10px; background: rgba(168,85,247,0.2); border: 1px solid rgba(168,85,247,0.4); display: flex; align-items: center; justify-content: center; color: #c084fc; font-size: 18px;">
+                        <i class="fa-solid fa-arrow-right-to-bracket"></i>
+                    </div>
+                    <div>
+                        <h2 style="margin: 0; color: #f1f5f9; font-size: 18px; font-weight: 700;">Login to DigiSkills LMS</h2>
+                        <p style="margin: 2px 0 0; color: #94a3b8; font-size: 12px;">Complete sign-in in the opened Chromium window</p>
+                    </div>
                 </div>
-                
-                <div style="background: rgba(99,179,237,0.1); border: 1px solid rgba(99,179,237,0.3); border-radius: 10px; padding: 16px; margin-bottom: 20px;">
-                    <p style="margin: 0 0 10px; font-weight: 600; color: #7dd3fc; font-size: 14px;">
-                        ✅ Option B — Run in PowerShell / Command Prompt:
-                    </p>
-                    <code id="loginCmd" style="background: rgba(0,0,0,0.4); border-radius: 6px; padding: 10px 14px; display: block; font-size: 13px; color: #86efac; word-break: break-all;">
-                        cd "c:\\py-projects\\Link Extractor" && .\\venv\\Scripts\\python.exe -m extractor.login_window
-                    </code>
-                    <button onclick="navigator.clipboard.writeText('.\\\\venv\\\\Scripts\\\\python.exe -m extractor.login_window').then(() => this.textContent = '✅ Copied!')" style="
-                        margin-top: 8px; background: rgba(99,179,237,0.2); border: 1px solid rgba(99,179,237,0.4);
-                        color: #7dd3fc; border-radius: 6px; padding: 6px 14px; cursor: pointer; font-size: 12px;
-                    ">📋 Copy Command</button>
+
+                <!-- Live Status Banner -->
+                <div id="loginModalStatusBox" style="
+                    display: flex; align-items: center; gap: 12px;
+                    background: rgba(59,130,246,0.12); border: 1px solid rgba(59,130,246,0.3);
+                    border-radius: 10px; padding: 14px 16px; margin: 16px 0;
+                ">
+                    <i id="loginModalSpinner" class="fa-solid fa-spinner fa-spin" style="font-size: 18px; color: #60a5fa; flex-shrink: 0;"></i>
+                    <span id="loginModalStatusText" style="color: #bfdbfe; font-size: 13px; line-height: 1.4;">
+                        Launching Chromium browser window...
+                    </span>
                 </div>
-                
-                <p style="color: #64748b; font-size: 12px; margin: 0 0 16px;">
-                    💡 After logging in, your session is saved automatically. Then come back here and click <strong style="color: #a78bfa">Fetch Courses</strong>.
-                </p>
-                
-                <div style="display: flex; gap: 10px; justify-content: flex-end;">
-                    <button onclick="document.getElementById('loginModal').remove(); checkSessionStatus();" style="
-                        background: linear-gradient(135deg, #7c3aed, #a78bfa);
-                        border: none; border-radius: 8px; padding: 10px 20px;
-                        color: white; cursor: pointer; font-weight: 600;
-                    ">✓ I've Logged In — Check Session</button>
+
+                <!-- Steps Guide -->
+                <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; font-size: 13px; color: #cbd5e1; line-height: 1.6;">
+                    <div style="display: flex; gap: 8px; margin-bottom: 6px;">
+                        <span style="color: #a855f7; font-weight: 700;">1.</span>
+                        <span>A browser window opens on your desktop displaying the DigiSkills login page.</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; margin-bottom: 6px;">
+                        <span style="color: #a855f7; font-weight: 700;">2.</span>
+                        <span>Enter your LMS Student ID & Password, then click <strong>Sign In</strong>.</span>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <span style="color: #a855f7; font-weight: 700;">3.</span>
+                        <span>Once your dashboard appears, this window will automatically detect your session!</span>
+                    </div>
+                </div>
+
+                <!-- Collapsible Manual Execution -->
+                <details style="margin-bottom: 20px; font-size: 12px; color: #94a3b8;">
+                    <summary style="cursor: pointer; color: #a78bfa; font-weight: 500; outline: none; margin-bottom: 8px;">
+                        ⚙️ Need to run manually via terminal or batch file?
+                    </summary>
+                    <div style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 10px; margin-top: 6px;">
+                        <p style="margin: 0 0 6px; color: #cbd5e1;">Double-click <code>login.bat</code> in the project folder, or run:</p>
+                        <code style="background: rgba(0,0,0,0.5); border-radius: 4px; padding: 6px 10px; display: block; font-size: 11px; color: #86efac; word-break: break-all;">
+                            & "C:\\venv\\envTemp\\Scripts\\python.exe" -m extractor.login_window
+                        </code>
+                    </div>
+                </details>
+
+                <!-- Actions -->
+                <div style="display: flex; gap: 10px; justify-content: flex-end; align-items: center;">
+                    <button id="btnRelaunchLogin" style="
+                        background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15);
+                        border-radius: 8px; padding: 9px 16px; color: #cbd5e1; cursor: pointer; font-size: 13px; font-weight: 500;
+                    "><i class="fa-solid fa-arrows-rotate"></i> Relaunch Browser</button>
+
+                    <button id="btnCheckSessionNow" style="
+                        background: linear-gradient(135deg, #7c3aed, #9333ea);
+                        border: none; border-radius: 8px; padding: 9px 18px;
+                        color: white; cursor: pointer; font-weight: 600; font-size: 13px;
+                        box-shadow: 0 4px 12px rgba(124,58,237,0.3);
+                    "><i class="fa-solid fa-circle-check"></i> Check Session</button>
                 </div>
             </div>
         `;
 
         document.body.appendChild(modal);
-        modal.addEventListener("click", (e) => { if (e.target === modal) modal.remove(); });
+
+        const closeModal = () => {
+            if (loginPollInterval) {
+                clearInterval(loginPollInterval);
+                loginPollInterval = null;
+            }
+            modal.remove();
+        };
+
+        document.getElementById("btnCloseLoginModal").addEventListener("click", closeModal);
+        modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
+
+        document.getElementById("btnRelaunchLogin").addEventListener("click", () => {
+            launchBrowserLogin();
+        });
+
+        document.getElementById("btnCheckSessionNow").addEventListener("click", async () => {
+            const statusText = document.getElementById("loginModalStatusText");
+            if (statusText) statusText.textContent = "Checking active session...";
+            const loggedIn = await checkSessionStatus();
+            if (loggedIn) {
+                onLoginSuccess();
+            } else {
+                if (statusText) statusText.textContent = "Session not detected yet. Please make sure you signed in on the opened browser.";
+            }
+        });
+
+        function onLoginSuccess() {
+            const statusBox = document.getElementById("loginModalStatusBox");
+            const spinner = document.getElementById("loginModalSpinner");
+            const statusText = document.getElementById("loginModalStatusText");
+            if (statusBox) {
+                statusBox.style.background = "rgba(34,197,94,0.15)";
+                statusBox.style.borderColor = "rgba(34,197,94,0.4)";
+            }
+            if (spinner) {
+                spinner.className = "fa-solid fa-circle-check";
+                spinner.style.color = "#4ade80";
+            }
+            if (statusText) {
+                statusText.style.color = "#86efac";
+                statusText.innerHTML = "<strong>✅ Login Successful!</strong> Session active. Loading courses...";
+            }
+            if (loginPollInterval) {
+                clearInterval(loginPollInterval);
+                loginPollInterval = null;
+            }
+            setTimeout(() => {
+                closeModal();
+                btnFetchCourses.click();
+            }, 1200);
+        }
+
+        // Start background polling to automatically detect login
+        if (loginPollInterval) clearInterval(loginPollInterval);
+        loginPollInterval = setInterval(async () => {
+            try {
+                const res = await fetch("/api/status");
+                const data = await res.json();
+                if (data.logged_in) {
+                    onLoginSuccess();
+                    checkSessionStatus();
+                }
+            } catch (_) {}
+        }, 2000);
     }
 
     // Fetch Enrolled Courses
@@ -192,6 +380,16 @@ document.addEventListener("DOMContentLoaded", () => {
             const res = await fetch("/api/courses");
             const data = await res.json();
             
+            if (data.error) {
+                if (data.error.includes("expired") || data.error.includes("Login") || data.error.includes("sign in")) {
+                    updateSessionBadge(false, "Session Expired");
+                    showLoginModal(true);
+                    return;
+                } else {
+                    alert("Course fetch notice: " + data.error);
+                }
+            }
+
             // Deduplicate by title
             const uniqueCourses = [];
             const seenTitles = new Set();
@@ -277,6 +475,7 @@ document.addEventListener("DOMContentLoaded", () => {
     courseSelect.addEventListener("change", () => {
         if (courseSelect.value && !courseSelect.value.startsWith("--")) {
             fetchCourseWeeks();
+            syncDownloadedFiles();
         }
     });
 
@@ -422,6 +621,7 @@ document.addEventListener("DOMContentLoaded", () => {
         btnStopExtract.disabled = true;
         progressMessage.textContent = msg;
         statExtractStatus.textContent = "Completed";
+        syncDownloadedFiles();
     }
 
     // Filter Pills Click Handlers
@@ -522,6 +722,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const isLocked = l.status === "locked_week" || (l.youtube_url && l.youtube_url.includes("Locked"));
             const isLoginRequired = l.status === "login_required" || (l.youtube_url && l.youtube_url.includes("Login required"));
             const isChecked = selectedIndices.has(index);
+            const isDownloaded = isLectureDownloaded(l, index);
 
             return `
                 <tr class="${isChecked ? 'row-selected' : ''}">
@@ -551,7 +752,13 @@ document.addEventListener("DOMContentLoaded", () => {
                                 <a href="${l.youtube_url}" target="_blank" class="yt-link">
                                     <i class="fa-brands fa-youtube" style="color: #ff0000;"></i> ${l.youtube_url}
                                 </a>
-                                <span class="yt-badge found">Active Link</span>
+                                ${isDownloaded ? `
+                                    <span class="yt-badge found" style="background: rgba(34, 197, 94, 0.18); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.4);">
+                                        <i class="fa-solid fa-circle-check"></i> Downloaded
+                                    </span>
+                                ` : `
+                                    <span class="yt-badge found">Active Link</span>
+                                `}
                             ` : isLoginRequired ? `
                                 <span class="yt-badge" style="background: rgba(251,191,36,0.15); color: #fbbf24; border: 1px solid rgba(251,191,36,0.4);">
                                     <i class="fa-solid fa-right-to-bracket"></i> Login Required
@@ -572,9 +779,15 @@ document.addEventListener("DOMContentLoaded", () => {
                                 <button class="btn btn-sm btn-primary" onclick="openVideoPreviewModal(${index})" title="Preview Video Modal">
                                     <i class="fa-solid fa-play"></i> Preview
                                 </button>
-                                <button class="btn btn-sm btn-success btn-dl-mp4" id="btnDlMp4_${index}" onclick="downloadSingleMp4(${index})" title="Download MP4 Video">
-                                    <i class="fa-solid fa-file-arrow-down"></i> MP4
-                                </button>
+                                ${isDownloaded ? `
+                                    <button class="btn btn-sm btn-outline-success btn-dl-mp4 downloaded" id="btnDlMp4_${index}" onclick="downloadSingleMp4(${index})" title="Already downloaded to disk! Click to re-download or overwrite.">
+                                        <i class="fa-solid fa-circle-check" style="color: #22c55e;"></i> Downloaded
+                                    </button>
+                                ` : `
+                                    <button class="btn btn-sm btn-success btn-dl-mp4" id="btnDlMp4_${index}" onclick="downloadSingleMp4(${index})" title="Download MP4 Video">
+                                        <i class="fa-solid fa-file-arrow-down"></i> MP4
+                                    </button>
+                                `}
                                 <button class="btn btn-sm btn-outline" onclick="copyToClipboard('${l.youtube_url}')" title="Copy Link">
                                     <i class="fa-solid fa-copy"></i>
                                 </button>
@@ -884,6 +1097,63 @@ document.addEventListener("DOMContentLoaded", () => {
         dlModalCloseBtn.addEventListener("click", window.closeDownloadProgressModal);
     }
 
+    // Real-Time SSE Stream Download Helper Function
+    function downloadWithProgressStream(params) {
+        return new Promise((resolve) => {
+            const query = new URLSearchParams({
+                youtube_url: params.youtube_url,
+                course_name: params.course_name || "Course",
+                week: params.week || "Week 01",
+                topic_title: params.topic_title || "Topic",
+                lecture_number: params.lecture_number || 1,
+                overwrite: params.overwrite ? "true" : "false",
+                quality: params.quality || "1080p"
+            });
+
+            const sse = new EventSource(`/api/stream-download?${query.toString()}`);
+            let resolved = false;
+
+            const finish = (result) => {
+                if (!resolved) {
+                    resolved = true;
+                    try { sse.close(); } catch (_) {}
+                    resolve(result);
+                }
+            };
+
+            sse.onmessage = (e) => {
+                try {
+                    const data = JSON.parse(e.data);
+                    if (data.type === "progress") {
+                        if (params.onProgress) params.onProgress(data);
+                    } else if (data.type === "complete" || data.status === "success") {
+                        if (params.onProgress) {
+                            params.onProgress({
+                                percent: 100,
+                                speed_str: "Finished",
+                                downloaded_mb: data.total_mb || data.downloaded_mb || "Complete",
+                                total_mb: data.total_mb || "Complete",
+                                eta: "0"
+                            });
+                        }
+                        finish({ status: "success", ...data });
+                    } else if (data.type === "already_exists" || data.status === "already_exists") {
+                        finish({ status: "already_exists", ...data });
+                    } else if (data.type === "error" || data.status === "error") {
+                        finish({ status: "error", message: data.message || "Download failed" });
+                    }
+                } catch (parseErr) {
+                    console.warn("[Download SSE Parse Error]", parseErr);
+                }
+            };
+
+            sse.onerror = (err) => {
+                console.warn("[Download SSE Connection Error]", err);
+                finish({ status: "error", message: "Connection lost during video download" });
+            };
+        });
+    }
+
     // Single MP4 Video Downloader
     window.downloadSingleMp4 = async function(index, overwrite = false) {
         const filtered = getFilteredLectures();
@@ -911,51 +1181,38 @@ document.addEventListener("DOMContentLoaded", () => {
         window.openDownloadProgressModal("Downloading Single Video", fileName, lecture.course_name || selectedCourseTitle || "Course", lecture.week || "Week 01", false);
 
         try {
-            const payload = {
+            const data = await downloadWithProgressStream({
                 youtube_url: lecture.youtube_url,
                 course_name: lecture.course_name || selectedCourseTitle || "Course",
                 week: lecture.week || "Week 01",
                 topic_title: lecture.topic_title || "Topic",
                 lecture_number: lecture.lecture_number || (index + 1),
                 overwrite: overwrite,
-                quality: selectedQuality
-            };
-
-            // Simulate smooth progress visualization while fetching
-            let prog = 10;
-            const timer = setInterval(() => {
-                if (prog < 90) {
-                    prog += Math.floor(Math.random() * 8) + 2;
+                quality: selectedQuality,
+                onProgress: (progData) => {
                     window.updateDownloadProgressModal({
                         status: "downloading",
-                        percent: prog,
-                        speed_str: "5.4 MB/s",
-                        downloaded_mb: `${Math.round(prog * 0.35)} MB`,
-                        total_mb: "35 MB",
-                        eta: `${Math.max(1, Math.round((100 - prog) / 15))}`
+                        percent: progData.percent,
+                        speed_str: progData.speed_str,
+                        downloaded_mb: progData.downloaded_mb,
+                        total_mb: progData.total_mb,
+                        eta: progData.eta
                     });
                 }
-            }, 300);
-
-            const res = await fetch("/api/download-single-mp4", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload)
             });
-
-            clearInterval(timer);
-            const data = await res.json();
 
             if (data.status === "already_exists") {
                 window.closeDownloadProgressModal();
+                lecture.is_downloaded = true;
+                syncDownloadedFiles();
                 window.showOverwriteModal(data.file_name, async (shouldOverwrite) => {
                     if (shouldOverwrite) {
                         await window.downloadSingleMp4(index, true);
                     } else {
                         if (btn) {
                             btn.disabled = false;
-                            btn.className = "btn btn-sm btn-outline";
-                            btn.innerHTML = `<i class="fa-solid fa-check" style="color: #22c55e;"></i> Saved`;
+                            btn.className = "btn btn-sm btn-outline-success btn-dl-mp4 downloaded";
+                            btn.innerHTML = `<i class="fa-solid fa-circle-check" style="color: #22c55e;"></i> Downloaded`;
                         }
                     }
                 });
@@ -965,16 +1222,15 @@ document.addEventListener("DOMContentLoaded", () => {
             if (data.status === "success") {
                 window.updateDownloadProgressModal({ status: "success", percent: 100 });
                 setTimeout(() => window.closeDownloadProgressModal(), 1200);
-
-                if (window.globalDownloadQueue) {
-                    window.globalDownloadQueue.syncDiskDownloads();
-                }
+                lecture.is_downloaded = true;
 
                 if (btn) {
                     btn.disabled = false;
-                    btn.className = "btn btn-sm btn-success";
-                    btn.innerHTML = `<i class="fa-solid fa-check"></i> Downloaded`;
+                    btn.className = "btn btn-sm btn-outline-success btn-dl-mp4 downloaded";
+                    btn.innerHTML = `<i class="fa-solid fa-circle-check" style="color: #22c55e;"></i> Downloaded`;
                 }
+
+                syncDownloadedFiles();
             } else {
                 window.closeDownloadProgressModal();
                 alert(`Download error for ${lecture.topic_title}: ${data.message || 'Unknown error'}`);
@@ -1035,39 +1291,25 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 btnDownloadSelectedMp4.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Downloading (${i + 1}/${selectedLectures.length})...`;
 
-                const payload = {
+                const data = await downloadWithProgressStream({
                     youtube_url: l.youtube_url,
                     course_name: l.course_name || selectedCourseTitle || "Course",
                     week: l.week || "Week 01",
                     topic_title: l.topic_title || "Topic",
                     lecture_number: l.lecture_number || (origIndex + 1),
                     overwrite: overwriteAll,
-                    quality: selectedQuality
-                };
-
-                let prog = 15;
-                const timer = setInterval(() => {
-                    if (prog < 90) {
-                        prog += Math.floor(Math.random() * 10) + 3;
+                    quality: selectedQuality,
+                    onProgress: (progData) => {
                         window.updateDownloadProgressModal({
                             status: "downloading",
-                            percent: prog,
-                            speed_str: "5.6 MB/s",
-                            downloaded_mb: `${Math.round(prog * 0.35)} MB`,
-                            total_mb: "35 MB",
-                            eta: `${Math.max(1, Math.round((100 - prog) / 20))}`
+                            percent: progData.percent,
+                            speed_str: progData.speed_str,
+                            downloaded_mb: progData.downloaded_mb,
+                            total_mb: progData.total_mb,
+                            eta: progData.eta
                         });
                     }
-                }, 250);
-
-                const res = await fetch("/api/download-single-mp4", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(payload)
                 });
-
-                clearInterval(timer);
-                const data = await res.json();
 
                 if (data.status === "already_exists" && !overwriteAll && !skipAll) {
                     const choice = await new Promise(resolve => {
@@ -1076,16 +1318,39 @@ document.addEventListener("DOMContentLoaded", () => {
 
                     if (choice) {
                         overwriteAll = true;
-                        payload.overwrite = true;
-                        await fetch("/api/download-single-mp4", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify(payload)
+                        const retryData = await downloadWithProgressStream({
+                            youtube_url: l.youtube_url,
+                            course_name: l.course_name || selectedCourseTitle || "Course",
+                            week: l.week || "Week 01",
+                            topic_title: l.topic_title || "Topic",
+                            lecture_number: l.lecture_number || (origIndex + 1),
+                            overwrite: true,
+                            quality: selectedQuality,
+                            onProgress: (progData) => {
+                                window.updateDownloadProgressModal({
+                                    status: "downloading",
+                                    percent: progData.percent,
+                                    speed_str: progData.speed_str,
+                                    downloaded_mb: progData.downloaded_mb,
+                                    total_mb: progData.total_mb,
+                                    eta: progData.eta
+                                });
+                            }
                         });
+                        if (retryData.status === "success" || retryData.status === "already_exists") {
+                            l.is_downloaded = true;
+                        }
                     } else {
                         skipAll = true;
+                        l.is_downloaded = true;
                     }
+                } else if (data.status === "success" || data.status === "already_exists") {
+                    l.is_downloaded = true;
+                } else {
+                    console.error(`Download failed for ${l.topic_title}:`, data.message);
                 }
+
+                syncDownloadedFiles();
             }
 
             window.updateDownloadProgressModal({ status: "success", percent: 100 });
@@ -1093,7 +1358,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
             btnDownloadSelectedMp4.disabled = false;
             btnDownloadSelectedMp4.innerHTML = `<i class="fa-solid fa-file-arrow-down"></i> Download Selected MP4s`;
-            alert(`✅ Batch MP4 download complete! Videos saved in downloads/ folder.`);
         });
     }
 
@@ -1226,56 +1490,53 @@ document.addEventListener("DOMContentLoaded", () => {
             this.runningCount++;
             this.renderDrawer();
 
-            // Simulate progress ticks
-            let prog = 10;
-            const timer = setInterval(() => {
-                if (task.status === "downloading" && prog < 90) {
-                    prog += Math.floor(Math.random() * 8) + 3;
-                    task.percent = prog;
-                    task.speed_str = (4.5 + Math.random() * 2).toFixed(1) + " MB/s";
-                    task.downloaded_mb = (prog * 0.35).toFixed(1) + " MB";
-                    task.total_mb = "35.0 MB";
-                    task.eta = Math.max(1, Math.round((100 - prog) / 15)) + "s";
-                    this.renderDrawer();
-                }
-            }, 300);
-
             try {
-                const payload = {
+                const data = await downloadWithProgressStream({
                     youtube_url: task.youtube_url,
                     course_name: task.course_name,
                     week: task.week,
                     topic_title: task.topic_title,
                     lecture_number: task.lecture_number,
                     overwrite: true,
-                    quality: task.quality
-                };
-
-                const res = await fetch("/api/download-single-mp4", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(payload)
+                    quality: task.quality,
+                    onProgress: (progData) => {
+                        task.percent = progData.percent;
+                        task.speed_str = progData.speed_str;
+                        task.downloaded_mb = progData.downloaded_mb;
+                        task.total_mb = progData.total_mb;
+                        task.eta = progData.eta ? `${progData.eta}s` : "Calculating...";
+                        this.renderDrawer();
+                    }
                 });
-
-                clearInterval(timer);
-                const data = await res.json();
 
                 if (data.status === "success" || data.status === "already_exists") {
                     task.status = "success";
                     task.percent = 100;
                     task.speed_str = "Complete";
                     task.file_name = data.file_name || task.file_name;
-                    this.totalDownloadedBytes += data.file_size || 35000000;
+                    task.total_mb = data.total_mb || task.total_mb;
+                    this.totalDownloadedBytes += data.file_size || (data.downloaded_bytes || 25000000);
+
+                    // Mark corresponding lecture as downloaded
+                    const matchingLec = extractedLectures.find(l => 
+                        (l.lecture_number === task.lecture_number && (l.week === task.week || !l.week)) ||
+                        (l.topic_title && task.topic_title && l.topic_title.toLowerCase() === task.topic_title.toLowerCase())
+                    );
+                    if (matchingLec) {
+                        matchingLec.is_downloaded = true;
+                    }
 
                     // Move to completed queue
                     this.activeQueue = this.activeQueue.filter(t => t.id !== task.id);
                     this.completedQueue.unshift(task);
+
+                    // Sync files and refresh table
+                    syncDownloadedFiles();
                 } else {
                     task.status = "error";
                     task.error_msg = data.message || "Failed";
                 }
             } catch (ex) {
-                clearInterval(timer);
                 task.status = "error";
                 task.error_msg = ex.message;
             }

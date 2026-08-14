@@ -107,7 +107,17 @@ class DigiSkillsExtractor:
 
             print(f"[DigiSkillsExtractor] Fetched {len(courses)} live enrolled & previous courses from dashboard.")
         except Exception as e:
-            print(f"[DigiSkillsExtractor] Error fetching enrolled courses: {e}")
+            err_str = str(e)
+            print(f"[DigiSkillsExtractor] Error fetching enrolled courses: {err_str}")
+            if "ERR_TOO_MANY_REDIRECTS" in err_str or "redirect" in err_str.lower():
+                print("[DigiSkillsExtractor] Session expired: LMS server returned redirect loop. Clearing stale cookies.")
+                try:
+                    await page.context.clear_cookies()
+                except Exception:
+                    pass
+                # Re-raise with a clear message so the caller knows the session expired
+                raise RuntimeError("DigiSkills session has expired. Please click 'Login Browser' or 'Auto Login' to sign in again.") from e
+            raise
 
         return courses
 

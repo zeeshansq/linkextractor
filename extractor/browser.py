@@ -31,11 +31,9 @@ class BrowserManager:
         
         is_headless = self.headless if not force_headful else False
         
-        if not self.context:
-            self.context = await self.playwright.chromium.launch_persistent_context(
-                user_data_dir=str(USER_DATA_DIR.resolve()),
+        if not self.browser:
+            self.browser = await self.playwright.chromium.launch(
                 headless=is_headless,
-                viewport={"width": 1366, "height": 768},
                 args=[
                     "--disable-blink-features=AutomationControlled",
                     "--no-sandbox",
@@ -43,15 +41,28 @@ class BrowserManager:
                 ]
             )
 
-        # Always reload fresh cookies from state.json if available
-        if STATE_FILE.exists():
-            try:
-                state_data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-                if "cookies" in state_data and state_data["cookies"]:
-                    await self.context.add_cookies(state_data["cookies"])
-                    print(f"[BrowserManager] Loaded {len(state_data['cookies'])} cookies from state.json")
-            except Exception as e:
-                print(f"[BrowserManager] Warning loading state cookies: {e}")
+        if not self.context:
+            context_kwargs = {
+                "viewport": {"width": 1366, "height": 768},
+                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            if STATE_FILE.exists():
+                try:
+                    context_kwargs["storage_state"] = str(STATE_FILE)
+                    print(f"[BrowserManager] Initialized context with storage state from {STATE_FILE}")
+                except Exception as e:
+                    print(f"[BrowserManager] Warning loading storage state: {e}")
+
+            self.context = await self.browser.new_context(**context_kwargs)
+        else:
+            if STATE_FILE.exists():
+                try:
+                    state_data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+                    if "cookies" in state_data and state_data["cookies"]:
+                        await self.context.clear_cookies()
+                        await self.context.add_cookies(state_data["cookies"])
+                except Exception as e:
+                    print(f"[BrowserManager] Warning refreshing state cookies: {e}")
 
         return self.context
 
@@ -159,17 +170,24 @@ class BrowserManager:
     async def close(self):
         if self.context:
             try:
-                await self.context.storage_state(path=str(STATE_FILE))
+                if STATE_FILE.parent.exists():
+                    await self.context.storage_state(path=str(STATE_FILE))
                 await self.context.close()
             except Exception:
                 pass
+            self.context = None
+        if self.browser:
+            try:
+                await self.browser.close()
+            except Exception:
+                pass
+            self.browser = None
         if self.playwright:
             try:
                 await self.playwright.stop()
             except Exception:
                 pass
-        self.context = None
-        self.playwright = None
+            self.playwright = None
 
     @staticmethod
     async def extract_youtube_url(page: Page, timeout: float = 3.5) -> Dict[str, Optional[str]]:

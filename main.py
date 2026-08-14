@@ -161,6 +161,7 @@ async def get_courses():
             try:
                 state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
                 if state.get("cookies"):
+                    await context.clear_cookies()
                     await context.add_cookies(state["cookies"])
             except Exception as ck_err:
                 print(f"[Courses] Cookie reload error: {ck_err}")
@@ -171,9 +172,17 @@ async def get_courses():
         if courses:
             import time
             _session_cache = {"logged_in": True, "checked_at": time.time()}
-        return {"courses": courses}
+            return {"courses": courses}
+        else:
+            return {
+                "courses": [],
+                "error": "No enrolled courses found. Your LMS session may have expired. Please click 'Login Browser' to sign in."
+            }
     except Exception as e:
-        return {"courses": [], "error": str(e)}
+        error_msg = str(e)
+        if "ERR_TOO_MANY_REDIRECTS" in error_msg:
+            error_msg = "DigiSkills session has expired. Please click 'Login Browser' or 'Auto Login' to sign in again."
+        return {"courses": [], "error": error_msg}
 
 @app.get("/api/course-weeks")
 async def get_course_weeks(button_id: Optional[str] = None, course_title: str = "Course"):
@@ -331,6 +340,61 @@ async def check_download_status(request: Request):
     except Exception as ex:
         return JSONResponse(status_code=500, content={"error": str(ex)})
 
+@app.get("/api/stream-download")
+async def stream_download(
+    youtube_url: str,
+    course_name: str = "Course",
+    week: str = "Week 01",
+    topic_title: str = "Topic",
+    lecture_number: Optional[int] = None,
+    overwrite: bool = False,
+    quality: str = "1080p"
+):
+    """Streams real-time live download progress via Server-Sent Events (SSE)."""
+    if not youtube_url or ("youtube" not in youtube_url.lower() and "youtu.be" not in youtube_url.lower()):
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Invalid YouTube URL"})
+
+    queue = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+
+    def on_progress(data: Dict[str, Any]):
+        loop.call_soon_threadsafe(queue.put_nowait, data)
+
+    async def run_download():
+        try:
+            res = await video_downloader.download_video(
+                youtube_url=youtube_url,
+                course_name=course_name,
+                week=week,
+                topic_title=topic_title,
+                lecture_number=lecture_number,
+                overwrite=overwrite,
+                quality=quality,
+                progress_callback=on_progress
+            )
+            if res.get("status") == "already_exists":
+                loop.call_soon_threadsafe(queue.put_nowait, {"type": "already_exists", **res})
+            elif res.get("status") == "success":
+                loop.call_soon_threadsafe(queue.put_nowait, {"type": "complete", **res})
+            else:
+                loop.call_soon_threadsafe(queue.put_nowait, {"type": "error", **res})
+        except Exception as ex:
+            loop.call_soon_threadsafe(queue.put_nowait, {"type": "error", "message": str(ex)})
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, None)
+
+    asyncio.create_task(run_download())
+
+    async def event_generator():
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            yield f"data: {json.dumps(item)}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
 @app.post("/api/download-single-mp4")
 async def download_single_mp4(request: Request):
     """Downloads a single video MP4 with progress reporting."""
@@ -382,13 +446,14 @@ async def open_downloads_folder():
 
 @app.get("/api/scan-downloads-folder")
 async def scan_downloads_folder():
-    """Scans the downloads folder and returns all existing MP4 video files."""
+    """Scans the downloads folder and returns all existing downloaded video files with rich metadata."""
     try:
         downloads_dir = DOWNLOADS_DIR.resolve()
         files = []
+        video_exts = {".mp4", ".m4a", ".mkv", ".webm", ".avi", ".mov"}
         if downloads_dir.exists():
-            for p in downloads_dir.glob("**/*.mp4"):
-                if p.is_file():
+            for p in downloads_dir.glob("**/*"):
+                if p.is_file() and p.suffix.lower() in video_exts and p.stat().st_size > 10000:
                     stat = p.stat()
                     rel_parts = p.relative_to(downloads_dir).parts
                     c_name = rel_parts[0] if len(rel_parts) > 1 else "Downloads"
@@ -397,6 +462,7 @@ async def scan_downloads_folder():
                         "file_name": p.name,
                         "file_path": str(p),
                         "file_size_mb": round(stat.st_size / (1024 * 1024), 1),
+                        "file_size_bytes": stat.st_size,
                         "course_name": c_name,
                         "week": w_name
                     })

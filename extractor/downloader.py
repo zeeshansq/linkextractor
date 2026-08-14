@@ -107,31 +107,34 @@ class VideoDownloader:
             except Exception:
                 pass
 
-        # Choose format specification with automatic quality fallback (1080p -> 720p -> 480p -> 360p -> best)
+        # Choose format specification with automatic quality fallback (prioritize universal H.264/AAC MP4 for maximum Windows thumbnail preview compatibility)
         if quality == "best" or quality == "1080p":
-            format_spec = "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best"
+            format_spec = "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
         elif quality == "720p":
-            format_spec = "bestvideo[height<=720]+bestaudio/best[height<=720]/bestvideo+bestaudio/best"
+            format_spec = "bestvideo[height<=720][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best"
         elif quality == "480p":
-            format_spec = "bestvideo[height<=480]+bestaudio/best[height<=480]/bestvideo+bestaudio/best"
+            format_spec = "bestvideo[height<=480][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]/best"
         elif quality == "360p":
-            format_spec = "bestvideo[height<=360]+bestaudio/best[height<=360]/best"
+            format_spec = "bestvideo[height<=360][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=360]+bestaudio/best[height<=360]/best"
         elif quality == "audio":
             format_spec = "bestaudio[ext=m4a]/bestaudio/best"
         else: # Default 1080p with fallback
-            format_spec = "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best"
+            format_spec = "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
 
         def progress_hook(d):
-            if progress_callback and d.get("status") == "downloading":
+            if not progress_callback:
+                return
+            status = d.get("status")
+            if status == "downloading":
                 total_bytes = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
                 downloaded = d.get("downloaded_bytes") or 0
                 pct = (downloaded / total_bytes * 100) if total_bytes > 0 else 0
                 speed = d.get("speed") or 0
                 eta = d.get("eta") or 0
 
-                speed_str = f"{speed / 1024 / 1024:.2f} MB/s" if speed else "N/A"
+                speed_str = f"{speed / 1024 / 1024:.2f} MB/s" if speed else "Calculating..."
                 downloaded_mb = f"{downloaded / 1024 / 1024:.1f} MB"
-                total_mb = f"{total_bytes / 1024 / 1024:.1f} MB" if total_bytes > 0 else "N/A"
+                total_mb = f"{total_bytes / 1024 / 1024:.1f} MB" if total_bytes > 0 else "Calculating..."
 
                 progress_callback({
                     "type": "progress",
@@ -145,13 +148,28 @@ class VideoDownloader:
                     "eta": eta,
                     "file_name": target_path.name
                 })
+            elif status == "finished":
+                total_bytes = d.get("total_bytes") or d.get("downloaded_bytes") or 0
+                size_str = f"{total_bytes / 1024 / 1024:.1f} MB" if total_bytes > 0 else "Complete"
+                progress_callback({
+                    "type": "progress",
+                    "status": "finishing",
+                    "percent": 100.0,
+                    "downloaded_bytes": total_bytes,
+                    "total_bytes": total_bytes,
+                    "downloaded_mb": size_str,
+                    "total_mb": size_str,
+                    "speed_str": "Embedding cover & finalizing...",
+                    "eta": 0,
+                    "file_name": target_path.name
+                })
 
-        # Try multiple player_client configurations if 403 Forbidden occurs
+        # Priority client list with full fallback chain:
         client_configs = [
-            ["android_vr", "web_creator", "ios"],
-            ["android", "web"],
-            ["mweb", "android_vr"],
-            []  # Default yt-dlp client handling
+            [],  # 1. Standard yt-dlp client (Full 720p/1080p HD)
+            ["android_vr", "web_creator"], # 2. VR/Creator clients
+            ["mweb", "android_vr"], # 3. Mobile web
+            ["android"] # 4. Reliable Android fallback
         ]
 
         last_ex = None
@@ -165,6 +183,18 @@ class VideoDownloader:
                 "nocheckcertificate": True,
                 "overwrites": overwrite,
                 "merge_output_format": "mp4",
+                "writethumbnail": True,
+                "postprocessors": [
+                    {
+                        "key": "EmbedThumbnail",
+                        "already_have_thumbnail": False
+                    },
+                    {
+                        "key": "FFmpegMetadata",
+                        "add_chapters": True,
+                        "add_metadata": True
+                    }
+                ],
                 "retries": 10,
                 "fragment_retries": 10,
                 "concurrent_fragment_downloads": 1
