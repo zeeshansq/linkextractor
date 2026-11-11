@@ -323,12 +323,21 @@ class DigiSkillsExtractor:
         if not force_live:
             cached_topics = self.cache_mgr.get_cached_topics(course_title, target_week)
             if cached_topics and len(cached_topics) >= 5:
+                # If target_week is "ALL", verify that cache actually contains all available weeks, not just an incomplete partial set
+                is_complete_set = True
+                if target_week and target_week.upper() == "ALL":
+                    cached_weeks = self.cache_mgr.get_cached_weeks(course_title)
+                    # A full course has 12 weeks. If cache has fewer than 10 weeks, do not short-circuit; proceed to live extraction
+                    if len(cached_weeks) < 10:
+                        is_complete_set = False
+
                 has_unextracted = any(
                     not (t.get("youtube_url") and t["youtube_url"].startswith("https://www.youtube.com"))
                     and t.get("status") != "locked_week"
                     for t in cached_topics
                 )
-                if not has_unextracted:
+
+                if is_complete_set and not has_unextracted:
                     print(f"[DigiSkillsExtractor] Instantly loading {len(cached_topics)} topics from local cache for '{course_title}' [{target_week}]")
                     self.emit_progress("info", {
                         "message": f"Instantly loaded {len(cached_topics)} topics from local cache [FAST ⚡]",
