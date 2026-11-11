@@ -1,5 +1,7 @@
 import asyncio
 import re
+import json
+import urllib.request
 from pathlib import Path
 from typing import List, Dict, Any, Callable, Optional
 from playwright.async_api import Page
@@ -8,6 +10,75 @@ from extractor.browser import BrowserManager
 from extractor.cache_manager import CacheManager
 
 BASE_URL = "https://lms.digiskills.pk"
+
+
+def fetch_youtube_duration_live(yt_url_or_id: str) -> str:
+    """Fetches exact duration string (HH:MM:SS or MM:SS) via YouTube InnerTube API or schema fallback."""
+    if not yt_url_or_id:
+        return "N/A"
+
+    # Extract clean 11-char video ID
+    v_id = None
+    if len(yt_url_or_id) == 11 and re.match(r'^[a-zA-Z0-9_-]{11}$', yt_url_or_id):
+        v_id = yt_url_or_id
+    else:
+        m = re.search(r'(?:v=|\/embed\/|\/v\/|youtu\.be\/|\/watch\?v=|\/shorts\/)([a-zA-Z0-9_-]{11})', yt_url_or_id)
+        if m:
+            v_id = m.group(1)
+
+    if not v_id:
+        return "N/A"
+
+    # 1. Primary: YouTube InnerTube API (instant, never blocked by 429 rate-limit)
+    try:
+        api_url = "https://www.youtube.com/youtubei/v1/player"
+        payload = json.dumps({
+            "videoId": v_id,
+            "context": {
+                "client": {
+                    "clientName": "WEB",
+                    "clientVersion": "2.20240101.00.00"
+                }
+            }
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            api_url,
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            }
+        )
+        res = urllib.request.urlopen(req, timeout=3.5)
+        data = json.loads(res.read().decode("utf-8"))
+        sec = int(data.get("videoDetails", {}).get("lengthSeconds", 0))
+        if sec > 0:
+            hrs = sec // 3600
+            mins = (sec % 3600) // 60
+            secs = sec % 60
+            return f"{hrs:02d}:{mins:02d}:{secs:02d}" if hrs > 0 else f"{mins:02d}:{secs:02d}"
+    except Exception:
+        pass
+
+    # 2. Fallback: Parse schema.org itemprop duration from webpage HTML
+    try:
+        web_url = f"https://www.youtube.com/watch?v={v_id}"
+        req = urllib.request.Request(web_url, headers={"User-Agent": "Mozilla/5.0"})
+        html = urllib.request.urlopen(req, timeout=3).read().decode("utf-8", "ignore")
+        m = re.search(r'itemprop=.duration. content=.PT(\w+).', html)
+        if m:
+            raw = m.group(1)
+            h = re.search(r'(\d+)H', raw)
+            m_part = re.search(r'(\d+)M', raw)
+            s = re.search(r'(\d+)S', raw)
+            hrs = int(h.group(1)) if h else 0
+            mins = int(m_part.group(1)) if m_part else 0
+            secs = int(s.group(1)) if s else 0
+            return f"{hrs:02d}:{mins:02d}:{secs:02d}" if hrs > 0 else f"{mins:02d}:{secs:02d}"
+    except Exception:
+        pass
+
+    return "N/A"
 
 
 class DigiSkillsExtractor:
@@ -434,6 +505,13 @@ class DigiSkillsExtractor:
                 self.emit_progress("stopped", {"message": "Extraction stopped by user."})
                 break
 
+            # Resolve duration: prefer LMS duration, fallback to live YouTube metadata if N/A
+            final_duration = item.get("duration") or "N/A"
+            if (not final_duration or final_duration == "N/A") and yt_data.get("youtube_url"):
+                resolved = fetch_youtube_duration_live(yt_data["youtube_url"])
+                if resolved != "N/A":
+                    final_duration = resolved
+
             lecture_record = {
                 "course_name": course_title,
                 "week": week_label,
@@ -443,7 +521,7 @@ class DigiSkillsExtractor:
                 "video_id": yt_data.get("video_id") or "N/A",
                 "embed_url": yt_data.get("embed_url") or "N/A",
                 "thumbnail_url": yt_data.get("thumbnail_url") or "",
-                "duration": item["duration"],
+                "duration": final_duration,
                 "description": yt_data.get("description") or "N/A",
                 "status": status
             }

@@ -782,7 +782,15 @@ document.addEventListener("DOMContentLoaded", () => {
                             `}
                         </div>
                     </td>
-                    <td style="text-align: center; font-size: 13px; color: #cbd5e1;">${l.duration || 'N/A'}</td>
+                    <td style="text-align: center; font-size: 13px; color: #cbd5e1;">
+                        ${l.duration && l.duration !== 'N/A' ? `
+                            <span class="yt-badge" style="background: rgba(148, 163, 184, 0.12); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.25); font-weight: 500;">
+                                <i class="fa-regular fa-clock" style="color: #94a3b8; font-size: 11px;"></i> ${escapeHtml(l.duration)}
+                            </span>
+                        ` : `
+                            <span style="color: #64748b; font-size: 12px;">--:--</span>
+                        `}
+                    </td>
                     <td style="text-align: center;">
                         <div style="display: flex; gap: 6px; justify-content: center; align-items: center;">
                             ${hasYt ? `
