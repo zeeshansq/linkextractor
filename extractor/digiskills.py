@@ -28,12 +28,124 @@ class DigiSkillsExtractor:
         """Quick check: are we on a real page (not redirected to Login)?"""
         return "login" not in page.url.lower()
 
+    async def _dismiss_modals(self, page: Page):
+        """Dismisses any popup dialogs/overlays (e.g. Trainee Survey #mViewSurvey) that intercept pointer events."""
+        try:
+            await page.evaluate("""() => {
+                document.querySelectorAll('[data-dismiss="modal"], .close, #btnSurveyAskLater').forEach(b => {
+                    try { b.click(); } catch(e) {}
+                });
+                document.querySelectorAll('.modal').forEach(m => {
+                    m.classList.remove('in');
+                    m.style.display = 'none';
+                    m.setAttribute('aria-hidden', 'true');
+                });
+                document.querySelectorAll('.modal-backdrop').forEach(b => b.remove());
+                document.body.classList.remove('modal-open');
+            }""")
+        except Exception as e:
+            print(f"[DigiSkillsExtractor] Note dismissing modals: {e}")
+
+    async def _open_course_page(self, page: Page, course_title: str, button_id: Optional[str] = None) -> bool:
+        """Navigates to the course page (CourseWebsite.aspx or PreviousCoursesVideos.aspx)
+        handling ASP.NET postbacks, modal dismissals, disabled active course buttons, and accordion expansion.
+        """
+        try:
+            # 1. Dismiss any blocking modals (e.g. Trainee Survey #mViewSurvey)
+            await self._dismiss_modals(page)
+
+            # 2. Expand all previous course accordions so elements are in DOM
+            await page.evaluate("""() => {
+                document.querySelectorAll('#ctl00_ContentPlaceHolder1_divPreviousCourses .panel-collapse').forEach(el => {
+                    el.classList.add('in');
+                    el.style.display = 'block';
+                });
+            }""")
+            await asyncio.sleep(0.3)
+
+            # 3. Check if we have an exact button_id
+            target_btn = None
+            if button_id and not button_id.startswith("http"):
+                target_btn = await page.query_selector(f"#{button_id}")
+
+            is_disabled = False
+            if target_btn:
+                dis_attr = await target_btn.get_attribute("disabled")
+                is_disabled = dis_attr is not None
+
+            # If button not found or disabled (e.g. active course batch ended), search for active matching button in Previous Courses
+            if not target_btn or is_disabled:
+                clean_target = re.sub(r'\s*\((?:Week|DSTP).*?\)', '', course_title, flags=re.IGNORECASE).strip().lower()
+                all_site_btns = await page.query_selector_all("a[id*='linkPreviousCourse'], a[id*='btnCourseWebsite']")
+                for sbtn in all_site_btns:
+                    s_dis = (await sbtn.get_attribute("disabled")) is not None
+                    if s_dis:
+                        continue
+                    heading = await sbtn.query_selector("#CourseHeading, .courses-heading, #lblmdbtitle")
+                    htxt = " ".join((await heading.inner_text()).strip().split()) if heading else ""
+                    if not htxt and await sbtn.inner_text():
+                        htxt = " ".join((await sbtn.inner_text()).strip().split())
+
+                    clean_h = re.sub(r'\s*\((?:Week|DSTP).*?\)', '', htxt, flags=re.IGNORECASE).strip().lower()
+                    if clean_target and (clean_target in clean_h or clean_h in clean_target):
+                        target_btn = sbtn
+                        print(f"[DigiSkillsExtractor] Found active alternative button: {await sbtn.get_attribute('id')} ({htxt})")
+                        break
+
+            if not target_btn:
+                print(f"[DigiSkillsExtractor] Warning: Could not locate a valid clickable button for '{course_title}'")
+                return False
+
+            # Dismiss modals again right before click to ensure no new dialog appeared
+            await self._dismiss_modals(page)
+
+            # Trigger navigation: check for ASP.NET __doPostBack in href or evaluate
+            href = (await target_btn.get_attribute("href")) or ""
+            target_id = (await target_btn.get_attribute("id")) or ""
+
+            if "__doPostBack" in href:
+                pb_match = re.search(r"__doPostBack\('([^']*)'", href)
+                if pb_match:
+                    pb_target = pb_match.group(1)
+                    await page.evaluate(f"__doPostBack('{pb_target}', '')")
+                else:
+                    await target_btn.click(force=True, timeout=5000)
+            elif "linkPreviousCourse" in target_id or "btnCourseWebsite" in target_id:
+                pb_target = target_id.replace('_', '$')
+                try:
+                    await page.evaluate(f"__doPostBack('{pb_target}', '')")
+                except Exception:
+                    await target_btn.click(force=True, timeout=5000)
+            else:
+                await target_btn.click(force=True, timeout=5000)
+
+            # Wait for navigation to complete
+            for _ in range(20):  # poll up to 6 seconds
+                await asyncio.sleep(0.3)
+                curr_url = page.url
+                if "CourseWebsite" in curr_url or "PreviousCoursesVideos" in curr_url:
+                    break
+
+            try:
+                await page.wait_for_load_state("domcontentloaded", timeout=4000)
+            except Exception:
+                pass
+
+            success = "CourseWebsite" in page.url or "PreviousCoursesVideos" in page.url
+            print(f"[DigiSkillsExtractor] Opened course page ({page.url}) -> Success: {success}")
+            return success
+
+        except Exception as e:
+            print(f"[DigiSkillsExtractor] Error opening course page: {e}")
+            return False
+
     async def get_enrolled_courses(self, page: Page) -> List[Dict[str, Any]]:
         """Scrapes active AND previous enrolled courses live from the student dashboard (Default.aspx)."""
         courses = []
         try:
             await page.goto(f"{BASE_URL}/Default.aspx", wait_until="domcontentloaded", timeout=15000)
             await asyncio.sleep(1.5)
+            await self._dismiss_modals(page)
 
             if not await self._is_logged_in(page):
                 print("[DigiSkillsExtractor] Not logged in - redirected to Login.aspx")
@@ -45,6 +157,8 @@ class DigiSkillsExtractor:
             cards = await page.query_selector_all("a[id*='btnCourseWebsite']")
             for btn in cards:
                 btn_id = await btn.get_attribute("id") or ""
+                dis = await btn.get_attribute("disabled")
+                is_disabled = dis is not None
                 parent = await btn.query_selector("xpath=ancestor::div[contains(@class,'courses-items') or contains(@class,'bg-courses')]")
                 title = ""
                 if parent:
@@ -62,7 +176,8 @@ class DigiSkillsExtractor:
                         "title": title,
                         "url": f"{BASE_URL}/CourseWebsite.aspx",
                         "button_id": btn_id,
-                        "is_previous": False
+                        "is_previous": False,
+                        "is_disabled": is_disabled
                     })
 
             # 2. My Previous Courses (Grouped by Batch)
@@ -174,60 +289,15 @@ class DigiSkillsExtractor:
         # ── Step 1: Navigate to Default.aspx and click course card ──
         try:
             await page.goto(f"{BASE_URL}/Default.aspx", wait_until="domcontentloaded", timeout=15000)
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(1.0)
         except Exception as nav_ex:
             print(f"[DigiSkillsExtractor] Navigation note: {nav_ex}")
 
         if await self._is_logged_in(page):
             is_live = True
-            clicked = False
-
-            # Try expanding previous courses accordion if needed
-            await page.evaluate("""() => {
-                document.querySelectorAll('#ctl00_ContentPlaceHolder1_divPreviousCourses .panel-collapse').forEach(el => {
-                    el.classList.add('in');
-                    el.style.display = 'block';
-                });
-            }""")
-            await asyncio.sleep(0.3)
-
-            # Click by exact button_id
-            if course_target and not course_target.startswith("http"):
-                try:
-                    btn = await page.query_selector(f"#{course_target}")
-                    if btn:
-                        print(f"[DigiSkillsExtractor] Clicking course button by ID: #{course_target}")
-                        await btn.click()
-                        await page.wait_for_load_state("domcontentloaded")
-                        await asyncio.sleep(2)
-                        clicked = True
-                except Exception as ex_btn:
-                    print(f"[DigiSkillsExtractor] Button ID click failed: {ex_btn}")
-
-            # Fallback by title search
+            clicked = await self._open_course_page(page, course_title, course_target)
             if not clicked:
-                try:
-                    all_btns = await page.query_selector_all("a[id*='btnCourseWebsite'], a[id*='linkPreviousCourse']")
-                    for sbtn in all_btns:
-                        heading = await sbtn.query_selector("#CourseHeading, .courses-heading, #lblmdbtitle")
-                        htxt = ""
-                        if heading:
-                            htxt = " ".join((await heading.inner_text()).strip().split())
-                        elif await sbtn.inner_text():
-                            htxt = " ".join((await sbtn.inner_text()).strip().split())
-
-                        if htxt and (course_title.lower()[:20] in htxt.lower() or htxt.lower()[:20] in course_title.lower()):
-                            print(f"[DigiSkillsExtractor] Clicking course link for: {htxt}")
-                            await sbtn.click()
-                            clicked = True
-                            await page.wait_for_load_state("domcontentloaded")
-                            await asyncio.sleep(2)
-                            break
-                except Exception as card_ex:
-                    print(f"[DigiSkillsExtractor] Card click error: {card_ex}")
-
-            if not clicked:
-                print(f"[DigiSkillsExtractor] WARNING: Could not click course card for '{course_title}'")
+                print(f"[DigiSkillsExtractor] WARNING: Could not navigate to course page for '{course_title}'")
         else:
             print(f"[DigiSkillsExtractor] Session expired — login required.")
 
@@ -454,46 +524,23 @@ class DigiSkillsExtractor:
     async def get_course_weeks_live(self, page: Page, course_title: str, button_id: Optional[str] = None) -> List[Dict[str, str]]:
         """Scrapes live week tabs for the selected active or previous course directly from the LMS."""
         weeks = []
+        cached_weeks = self.cache_mgr.get_cached_weeks(course_title)
         try:
-            await page.goto(f"{BASE_URL}/Default.aspx", wait_until="domcontentloaded", timeout=15000)
-            await asyncio.sleep(1)
+            if "Default.aspx" not in page.url or "login" in page.url.lower():
+                try:
+                    await page.goto(f"{BASE_URL}/Default.aspx", wait_until="domcontentloaded", timeout=25000)
+                except Exception as goto_ex:
+                    print(f"[DigiSkillsExtractor] Navigation notice: {goto_ex}")
+                await asyncio.sleep(1)
 
             if not await self._is_logged_in(page):
+                if cached_weeks:
+                    print(f"[DigiSkillsExtractor] Not logged in, returning {len(cached_weeks)} cached weeks for '{course_title}'")
+                    return cached_weeks
                 return weeks
 
-            await page.evaluate("""() => {
-                document.querySelectorAll('#ctl00_ContentPlaceHolder1_divPreviousCourses .panel-collapse').forEach(el => {
-                    el.classList.add('in');
-                    el.style.display = 'block';
-                });
-            }""")
-            await asyncio.sleep(0.3)
-
-            clicked = False
-            if button_id and not button_id.startswith("http"):
-                try:
-                    btn = await page.query_selector(f"#{button_id}")
-                    if btn:
-                        await btn.click()
-                        await page.wait_for_load_state("domcontentloaded")
-                        await asyncio.sleep(1.5)
-                        clicked = True
-                except Exception:
-                    pass
-
-            if not clicked:
-                all_site_btns = await page.query_selector_all("a[id*='btnCourseWebsite'], a[id*='linkPreviousCourse']")
-                for site_btn in all_site_btns:
-                    heading = await site_btn.query_selector("#CourseHeading, .courses-heading, #lblmdbtitle")
-                    if heading:
-                        htxt = " ".join((await heading.inner_text()).strip().split())
-                        if course_title.lower()[:20] in htxt.lower() or htxt.lower()[:20] in course_title.lower():
-                            await site_btn.click()
-                            await page.wait_for_load_state("domcontentloaded")
-                            await asyncio.sleep(1.5)
-                            break
-
-            if "CourseWebsite" in page.url or "PreviousCoursesVideos" in page.url:
+            opened = await self._open_course_page(page, course_title, button_id)
+            if opened:
                 week_headers = await page.query_selector_all("a[id^='Week_'], .accordion-toggle")
                 for w_idx, week_header in enumerate(week_headers, 1):
                     week_id = await week_header.get_attribute("id") or f"Week_{w_idx:02d}"
@@ -505,6 +552,12 @@ class DigiSkillsExtractor:
                         "raw_title": raw_title
                     })
                 print(f"[DigiSkillsExtractor] Fetched {len(weeks)} live week tabs for '{course_title}'")
+
+            if not weeks and cached_weeks:
+                print(f"[DigiSkillsExtractor] Live weeks not found, returning {len(cached_weeks)} cached weeks for '{course_title}'")
+                return cached_weeks
         except Exception as ex:
             print(f"[DigiSkillsExtractor] Error fetching live course weeks: {ex}")
+            if cached_weeks:
+                return cached_weeks
         return weeks

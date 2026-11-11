@@ -18,6 +18,10 @@ from extractor.exporter import DataExporter
 
 from contextlib import asynccontextmanager
 
+browser_manager: Optional[BrowserManager] = None
+latest_extracted_data: List[Dict[str, Any]] = []
+active_extractor: Optional[DigiSkillsExtractor] = None
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global browser_manager

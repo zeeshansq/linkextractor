@@ -36,6 +36,21 @@ class CacheManager:
         except Exception as e:
             print(f"[CacheManager] Error saving cache: {e}")
 
+    def get_cached_weeks(self, course_name: str) -> List[Dict[str, str]]:
+        """Returns list of weeks available in cache for a given course name."""
+        course_key = clean_course_key(course_name)
+        if course_key not in self._data:
+            return []
+        weeks_data = self._data[course_key].get("weeks", {})
+        result = []
+        for idx, (w_title, topics) in enumerate(weeks_data.items(), 1):
+            result.append({
+                "id": f"Week_{idx:02d}",
+                "title": w_title,
+                "raw_title": f"{w_title} ({len(topics)} topics)"
+            })
+        return result
+
     def get_cached_topics(self, course_name: str, target_week: str = "ALL") -> Optional[List[Dict[str, Any]]]:
         """Returns cached topics if available and complete."""
         course_key = clean_course_key(course_name)

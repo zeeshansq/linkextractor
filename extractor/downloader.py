@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 import asyncio
 from pathlib import Path
 from typing import Dict, Any, Optional, Callable
@@ -39,6 +40,9 @@ class VideoDownloader:
             self.ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
         except Exception:
             self.ffmpeg_path = None
+
+        # Detect Node.js executable for yt-dlp JS runtime challenge solving
+        self.node_path = shutil.which("node") or shutil.which("nodejs")
 
     def get_target_path(self, course_name: str, week: str, topic_title: str, lecture_number: Optional[int] = None) -> Path:
         """Constructs the canonical file path: downloads/<CleanCourse>/<CleanWeek>/<CleanFilename>.mp4"""
@@ -206,6 +210,9 @@ class VideoDownloader:
                         "player_client": client_list
                     }
                 }
+
+            if self.node_path:
+                ydl_opts["js_runtimes"] = {"node": {"path": self.node_path}}
 
             if self.ffmpeg_path:
                 ydl_opts["ffmpeg_location"] = self.ffmpeg_path

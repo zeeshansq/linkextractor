@@ -75,39 +75,49 @@ document.addEventListener("DOMContentLoaded", () => {
         return str.toLowerCase().replace(/[^a-z0-9]/g, '');
     }
 
+    function normalizeWeek(w) {
+        if (!w) return "week 01";
+        const m = w.match(/\d+/);
+        return m ? `week ${m[0].padStart(2, '0')}`.toLowerCase() : w.trim().toLowerCase();
+    }
+
     function isLectureDownloaded(l, index) {
         if (!l) return false;
         if (l.is_downloaded === true) return true;
 
         const currentCourse = (l.course_name || (courseSelect && courseSelect.selectedIndex >= 0 ? courseSelect.options[courseSelect.selectedIndex].text : "") || "").trim();
         const cleanCourse = cleanCourseTitle(currentCourse).toLowerCase();
-        const week = (l.week || "Week 01").toLowerCase();
+        const lectureWeek = normalizeWeek(l.week || "Week 01");
         const topicTitle = (l.topic_title || "").toLowerCase();
         const lecNum = l.lecture_number || (index !== undefined ? index + 1 : null);
 
         return downloadedDiskFiles.some(f => {
             const fName = (f.file_name || "").toLowerCase();
             const fCourse = (f.course_name || "").toLowerCase();
-            const fWeek = (f.week || "").toLowerCase();
+            const fWeek = normalizeWeek(f.week || "");
 
-            // 1. Check Topic number prefix e.g. "Topic 001" or "Topic 1"
+            // 1. Must match the course
+            const courseMatches = !cleanCourse || fCourse.includes(cleanCourse) || cleanCourse.includes(fCourse);
+            if (!courseMatches) return false;
+
+            // 2. Must match the exact week folder
+            if (fWeek !== lectureWeek) return false;
+
+            // 3. Match within the same course and week:
+            // Check Topic number prefix e.g. "Topic 001" or "Topic 1"
             if (lecNum !== null) {
                 const numPadded = `topic ${lecNum.toString().padStart(3, '0')}`.toLowerCase();
                 const numSimple = `topic ${lecNum}`.toLowerCase();
                 if (fName.startsWith(numPadded) || fName.startsWith(numSimple)) {
-                    if (fWeek === week || fCourse.includes(cleanCourse) || cleanCourse.includes(fCourse) || !cleanCourse) {
-                        return true;
-                    }
+                    return true;
                 }
             }
 
-            // 2. Check title slug substring
+            // Check title slug substring
             const cleanTitleSlug = sanitizeTitleForCompare(topicTitle);
             const fNameSlug = sanitizeTitleForCompare(fName);
             if (cleanTitleSlug && cleanTitleSlug.length > 5 && fNameSlug.includes(cleanTitleSlug)) {
-                if (fWeek === week || !cleanCourse || fCourse.includes(cleanCourse) || cleanCourse.includes(fCourse)) {
-                    return true;
-                }
+                return true;
             }
 
             return false;
@@ -407,7 +417,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 opt.value = c.button_id || c.url;
                 opt.dataset.buttonId = c.button_id || "";
                 opt.dataset.title = c.title;
-                opt.textContent = c.title;
+                opt.textContent = c.is_disabled ? `${c.title} (Batch Ended)` : c.title;
                 courseSelect.appendChild(opt);
             });
 
@@ -1009,13 +1019,58 @@ document.addEventListener("DOMContentLoaded", () => {
         confirmBtn.addEventListener("click", onConfirm);
     };
 
+    // Lightweight Floating Toast Notification Helper
+    window.showDownloadToast = function(msg, onClick = null) {
+        let toast = document.getElementById("dlGlobalToast");
+        if (!toast) {
+            toast = document.createElement("div");
+            toast.id = "dlGlobalToast";
+            toast.className = "dl-toast-notice";
+            document.body.appendChild(toast);
+        }
+
+        toast.innerHTML = `
+            <div style="display:flex; align-items:center; gap: 10px;">
+                <i class="fa-solid fa-cloud-arrow-down" style="color: #818cf8; font-size: 1.1rem;"></i>
+                <span style="font-size: 0.88rem; color: #f1f5f9; font-weight: 500;">${msg}</span>
+            </div>
+            <button class="btn btn-sm btn-outline" style="padding: 4px 10px; font-size: 0.75rem;">View</button>
+        `;
+        toast.style.display = "flex";
+
+        const btn = toast.querySelector("button");
+        if (btn) {
+            btn.onclick = (e) => {
+                e.stopPropagation();
+                if (onClick) onClick();
+                else window.openDownloadManagerDrawer();
+                toast.style.display = "none";
+            };
+        }
+
+        toast.onclick = () => {
+            if (onClick) onClick();
+            else window.openDownloadManagerDrawer();
+            toast.style.display = "none";
+        };
+
+        clearTimeout(toast._timeout);
+        toast._timeout = setTimeout(() => {
+            toast.style.display = "none";
+        }, 5000);
+    };
+
+    // Active Task tracking for Modal
+    window.currentActiveTask = null;
+
     // Premium Download Progress Modal Helper Functions
-    window.openDownloadProgressModal = function(title, fileName, courseFolder, weekFolder, isBatch = false, totalBatchItems = 1) {
+    window.openDownloadProgressModal = function(title, fileName, courseFolder, weekFolder, isBatch = false, totalBatchItems = 1, quality = "1080p") {
         const modal = document.getElementById("downloadProgressModal");
         const modalTitle = document.getElementById("dlModalTitle");
         const modalFileName = document.getElementById("dlModalFileName");
         const modalCourse = document.getElementById("dlModalCourseFolder");
         const modalWeek = document.getElementById("dlModalWeekFolder");
+        const modalQuality = document.getElementById("dlModalQualityBadge");
         const batchWrap = document.getElementById("dlBatchProgressWrap");
         const batchCounter = document.getElementById("dlBatchCounter");
         const batchFill = document.getElementById("dlBatchProgressBarFill");
@@ -1024,6 +1079,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (modalFileName) modalFileName.textContent = fileName;
         if (modalCourse) modalCourse.textContent = courseFolder || "Course";
         if (modalWeek) modalWeek.textContent = weekFolder || "Week 01";
+        if (modalQuality) modalQuality.textContent = quality || "1080p";
 
         if (batchWrap) {
             if (isBatch) {
@@ -1039,6 +1095,32 @@ document.addEventListener("DOMContentLoaded", () => {
         if (modal) modal.style.display = "flex";
     };
 
+    window.openDownloadProgressModalForTask = function(task) {
+        if (!task) return;
+        window.currentActiveTask = task;
+        const isBatch = window.globalDownloadQueue && window.globalDownloadQueue.activeQueue.length > 1;
+        const total = window.globalDownloadQueue ? window.globalDownloadQueue.activeQueue.length : 1;
+        
+        window.openDownloadProgressModal(
+            task.status === "downloading" ? "Active Download Stream" : "Queued Video Download",
+            task.file_name,
+            task.course_name,
+            task.week,
+            isBatch,
+            total,
+            task.quality
+        );
+
+        window.updateDownloadProgressModal({
+            status: task.status,
+            percent: task.percent || 0,
+            speed_str: task.speed_str || "0.0 MB/s",
+            downloaded_mb: task.downloaded_mb || "0 MB",
+            total_mb: task.total_mb || "0 MB",
+            eta: task.eta || "Pending"
+        });
+    };
+
     window.updateDownloadProgressModal = function(data) {
         const statusText = document.getElementById("dlModalStatusText");
         const percentText = document.getElementById("dlModalPercentText");
@@ -1048,18 +1130,21 @@ document.addEventListener("DOMContentLoaded", () => {
         const eta = document.getElementById("dlModalEta");
 
         if (data.status === "downloading") {
-            if (statusText) statusText.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Downloading MP4 video...`;
+            if (statusText) statusText.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Downloading MP4 video stream...`;
             if (percentText) percentText.textContent = `${data.percent}%`;
             if (fill) fill.style.width = `${data.percent}%`;
             if (speed) speed.textContent = data.speed_str || "0.0 MB/s";
             if (size) size.textContent = `${data.downloaded_mb || '0 MB'} / ${data.total_mb || '0 MB'}`;
-            if (eta) eta.textContent = data.eta ? `${data.eta}s` : "Calculating...";
+            if (eta) eta.textContent = data.eta ? (data.eta.includes('s') ? data.eta : `${data.eta}s`) : "Calculating...";
         } else if (data.status === "success" || data.percent === 100) {
             if (statusText) statusText.innerHTML = `<i class="fa-solid fa-circle-check" style="color: #22c55e;"></i> Download Complete!`;
             if (percentText) percentText.textContent = `100%`;
             if (fill) fill.style.width = `100%`;
             if (speed) speed.textContent = "Finished";
             if (eta) eta.textContent = "0s";
+        } else if (data.status === "error") {
+            if (statusText) statusText.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color: #ef4444;"></i> Download Failed`;
+            if (speed) speed.textContent = "Error";
         }
     };
 
@@ -1087,299 +1172,56 @@ document.addEventListener("DOMContentLoaded", () => {
         if (eta) eta.textContent = `Calculating...`;
     };
 
-    window.closeDownloadProgressModal = function() {
+    window.closeDownloadProgressModal = function(notifyBackground = false) {
         const modal = document.getElementById("downloadProgressModal");
         if (modal) modal.style.display = "none";
+        
+        if (notifyBackground && window.currentActiveTask && (window.currentActiveTask.status === "downloading" || window.currentActiveTask.status === "queued")) {
+            window.showDownloadToast("Download running in background! Click to view in Download Manager.", () => {
+                window.openDownloadManagerDrawer();
+            });
+        }
     };
 
+    // Modal Control Buttons
     const dlModalCloseBtn = document.getElementById("dlModalCloseBtn");
     if (dlModalCloseBtn) {
-        dlModalCloseBtn.addEventListener("click", window.closeDownloadProgressModal);
+        dlModalCloseBtn.addEventListener("click", () => window.closeDownloadProgressModal(true));
     }
 
-    // Real-Time SSE Stream Download Helper Function
-    function downloadWithProgressStream(params) {
-        return new Promise((resolve) => {
-            const query = new URLSearchParams({
-                youtube_url: params.youtube_url,
-                course_name: params.course_name || "Course",
-                week: params.week || "Week 01",
-                topic_title: params.topic_title || "Topic",
-                lecture_number: params.lecture_number || 1,
-                overwrite: params.overwrite ? "true" : "false",
-                quality: params.quality || "1080p"
-            });
+    const btnDlModalMinimize = document.getElementById("btnDlModalMinimize");
+    if (btnDlModalMinimize) {
+        btnDlModalMinimize.addEventListener("click", () => window.closeDownloadProgressModal(true));
+    }
 
-            const sse = new EventSource(`/api/stream-download?${query.toString()}`);
-            let resolved = false;
+    const btnDlModalBackground = document.getElementById("btnDlModalBackground");
+    if (btnDlModalBackground) {
+        btnDlModalBackground.addEventListener("click", () => window.closeDownloadProgressModal(true));
+    }
 
-            const finish = (result) => {
-                if (!resolved) {
-                    resolved = true;
-                    try { sse.close(); } catch (_) {}
-                    resolve(result);
-                }
-            };
-
-            sse.onmessage = (e) => {
-                try {
-                    const data = JSON.parse(e.data);
-                    if (data.type === "progress") {
-                        if (params.onProgress) params.onProgress(data);
-                    } else if (data.type === "complete" || data.status === "success") {
-                        if (params.onProgress) {
-                            params.onProgress({
-                                percent: 100,
-                                speed_str: "Finished",
-                                downloaded_mb: data.total_mb || data.downloaded_mb || "Complete",
-                                total_mb: data.total_mb || "Complete",
-                                eta: "0"
-                            });
-                        }
-                        finish({ status: "success", ...data });
-                    } else if (data.type === "already_exists" || data.status === "already_exists") {
-                        finish({ status: "already_exists", ...data });
-                    } else if (data.type === "error" || data.status === "error") {
-                        finish({ status: "error", message: data.message || "Download failed" });
-                    }
-                } catch (parseErr) {
-                    console.warn("[Download SSE Parse Error]", parseErr);
-                }
-            };
-
-            sse.onerror = (err) => {
-                console.warn("[Download SSE Connection Error]", err);
-                finish({ status: "error", message: "Connection lost during video download" });
-            };
+    const btnDlModalOpenDrawer = document.getElementById("btnDlModalOpenDrawer");
+    if (btnDlModalOpenDrawer) {
+        btnDlModalOpenDrawer.addEventListener("click", () => {
+            window.closeDownloadProgressModal(false);
+            window.openDownloadManagerDrawer();
         });
     }
 
-    // Single MP4 Video Downloader
-    window.downloadSingleMp4 = async function(index, overwrite = false) {
-        const filtered = getFilteredLectures();
-        const lecture = filtered[index] || extractedLectures[index];
-        if (!lecture || !lecture.youtube_url || !lecture.youtube_url.startsWith("https://www.youtube.com")) {
-            alert("No valid YouTube video link found for this topic.");
-            return;
-        }
-
-        const btn = document.getElementById(`btnDlMp4_${index}`);
-        if (btn) {
-            btn.disabled = true;
-            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Downloading...`;
-        }
-
-        const courseSelect = document.getElementById("courseSelect");
-        const qualitySelect = document.getElementById("qualitySelect");
-        let selectedCourseTitle = "";
-        if (courseSelect && courseSelect.selectedIndex >= 0) {
-            selectedCourseTitle = courseSelect.options[courseSelect.selectedIndex].text || "";
-        }
-        const selectedQuality = qualitySelect ? qualitySelect.value : "1080p";
-
-        const fileName = `Topic ${(lecture.lecture_number || index + 1).toString().padStart(3, '0')} - ${lecture.topic_title}.mp4`;
-        window.openDownloadProgressModal("Downloading Single Video", fileName, lecture.course_name || selectedCourseTitle || "Course", lecture.week || "Week 01", false);
-
-        try {
-            const data = await downloadWithProgressStream({
-                youtube_url: lecture.youtube_url,
-                course_name: lecture.course_name || selectedCourseTitle || "Course",
-                week: lecture.week || "Week 01",
-                topic_title: lecture.topic_title || "Topic",
-                lecture_number: lecture.lecture_number || (index + 1),
-                overwrite: overwrite,
-                quality: selectedQuality,
-                onProgress: (progData) => {
-                    window.updateDownloadProgressModal({
-                        status: "downloading",
-                        percent: progData.percent,
-                        speed_str: progData.speed_str,
-                        downloaded_mb: progData.downloaded_mb,
-                        total_mb: progData.total_mb,
-                        eta: progData.eta
-                    });
-                }
-            });
-
-            if (data.status === "already_exists") {
-                window.closeDownloadProgressModal();
-                lecture.is_downloaded = true;
-                syncDownloadedFiles();
-                window.showOverwriteModal(data.file_name, async (shouldOverwrite) => {
-                    if (shouldOverwrite) {
-                        await window.downloadSingleMp4(index, true);
-                    } else {
-                        if (btn) {
-                            btn.disabled = false;
-                            btn.className = "btn btn-sm btn-outline-success btn-dl-mp4 downloaded";
-                            btn.innerHTML = `<i class="fa-solid fa-circle-check" style="color: #22c55e;"></i> Downloaded`;
-                        }
+    const btnDlModalCancel = document.getElementById("btnDlModalCancel");
+    if (btnDlModalCancel) {
+        btnDlModalCancel.addEventListener("click", () => {
+            if (window.currentActiveTask) {
+                if (confirm(`Are you sure you want to cancel downloading "${window.currentActiveTask.file_name}"?`)) {
+                    if (window.globalDownloadQueue) {
+                        window.globalDownloadQueue.cancelTask(window.currentActiveTask.id);
                     }
-                });
-                return;
-            }
-
-            if (data.status === "success") {
-                window.updateDownloadProgressModal({ status: "success", percent: 100 });
-                setTimeout(() => window.closeDownloadProgressModal(), 1200);
-                lecture.is_downloaded = true;
-
-                if (btn) {
-                    btn.disabled = false;
-                    btn.className = "btn btn-sm btn-outline-success btn-dl-mp4 downloaded";
-                    btn.innerHTML = `<i class="fa-solid fa-circle-check" style="color: #22c55e;"></i> Downloaded`;
+                    window.closeDownloadProgressModal(false);
                 }
-
-                syncDownloadedFiles();
             } else {
-                window.closeDownloadProgressModal();
-                alert(`Download error for ${lecture.topic_title}: ${data.message || 'Unknown error'}`);
-                if (btn) {
-                    btn.disabled = false;
-                    btn.innerHTML = `<i class="fa-solid fa-file-arrow-down"></i> MP4`;
-                }
+                window.closeDownloadProgressModal(false);
             }
-        } catch (err) {
-            window.closeDownloadProgressModal();
-            alert(`Failed to download MP4: ${err.message}`);
-            if (btn) {
-                btn.disabled = false;
-                btn.innerHTML = `<i class="fa-solid fa-file-arrow-down"></i> MP4`;
-            }
-        }
-    };
-
-    // Batch Selected MP4 Video Downloader
-    const btnDownloadSelectedMp4 = document.getElementById("btnDownloadSelectedMp4");
-    if (btnDownloadSelectedMp4) {
-        btnDownloadSelectedMp4.addEventListener("click", async () => {
-            const filtered = getFilteredLectures();
-            const selectedLectures = Array.from(selectedIndices).map(i => filtered[i]).filter(l => l && l.youtube_url && l.youtube_url.startsWith("https://www.youtube.com"));
-
-            if (selectedLectures.length === 0) {
-                alert("No valid YouTube video links selected for download.");
-                return;
-            }
-
-            let overwriteAll = false;
-            let skipAll = false;
-
-            btnDownloadSelectedMp4.disabled = true;
-            btnDownloadSelectedMp4.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Downloading (0/${selectedLectures.length})...`;
-
-            const courseSelect = document.getElementById("courseSelect");
-            const qualitySelect = document.getElementById("qualitySelect");
-            let selectedCourseTitle = "";
-            if (courseSelect && courseSelect.selectedIndex >= 0) {
-                selectedCourseTitle = courseSelect.options[courseSelect.selectedIndex].text || "";
-            }
-            const selectedQuality = qualitySelect ? qualitySelect.value : "1080p";
-
-            const firstLec = selectedLectures[0];
-            const firstFileName = `Topic ${(firstLec.lecture_number || 1).toString().padStart(3, '0')} - ${firstLec.topic_title}.mp4`;
-            window.openDownloadProgressModal("Batch Video Download", firstFileName, firstLec.course_name || selectedCourseTitle || "Course", firstLec.week || "Week 01", true, selectedLectures.length);
-
-            for (let i = 0; i < selectedLectures.length; i++) {
-                const l = selectedLectures[i];
-                const origIndex = extractedLectures.indexOf(l);
-
-                window.updateBatchProgressModal(i + 1, selectedLectures.length);
-                const currentFileName = `Topic ${(l.lecture_number || origIndex + 1).toString().padStart(3, '0')} - ${l.topic_title}.mp4`;
-
-                const modalFileName = document.getElementById("dlModalFileName");
-                if (modalFileName) modalFileName.textContent = currentFileName;
-
-                btnDownloadSelectedMp4.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Downloading (${i + 1}/${selectedLectures.length})...`;
-
-                const data = await downloadWithProgressStream({
-                    youtube_url: l.youtube_url,
-                    course_name: l.course_name || selectedCourseTitle || "Course",
-                    week: l.week || "Week 01",
-                    topic_title: l.topic_title || "Topic",
-                    lecture_number: l.lecture_number || (origIndex + 1),
-                    overwrite: overwriteAll,
-                    quality: selectedQuality,
-                    onProgress: (progData) => {
-                        window.updateDownloadProgressModal({
-                            status: "downloading",
-                            percent: progData.percent,
-                            speed_str: progData.speed_str,
-                            downloaded_mb: progData.downloaded_mb,
-                            total_mb: progData.total_mb,
-                            eta: progData.eta
-                        });
-                    }
-                });
-
-                if (data.status === "already_exists" && !overwriteAll && !skipAll) {
-                    const choice = await new Promise(resolve => {
-                        window.showOverwriteModal(data.file_name, resolve);
-                    });
-
-                    if (choice) {
-                        overwriteAll = true;
-                        const retryData = await downloadWithProgressStream({
-                            youtube_url: l.youtube_url,
-                            course_name: l.course_name || selectedCourseTitle || "Course",
-                            week: l.week || "Week 01",
-                            topic_title: l.topic_title || "Topic",
-                            lecture_number: l.lecture_number || (origIndex + 1),
-                            overwrite: true,
-                            quality: selectedQuality,
-                            onProgress: (progData) => {
-                                window.updateDownloadProgressModal({
-                                    status: "downloading",
-                                    percent: progData.percent,
-                                    speed_str: progData.speed_str,
-                                    downloaded_mb: progData.downloaded_mb,
-                                    total_mb: progData.total_mb,
-                                    eta: progData.eta
-                                });
-                            }
-                        });
-                        if (retryData.status === "success" || retryData.status === "already_exists") {
-                            l.is_downloaded = true;
-                        }
-                    } else {
-                        skipAll = true;
-                        l.is_downloaded = true;
-                    }
-                } else if (data.status === "success" || data.status === "already_exists") {
-                    l.is_downloaded = true;
-                } else {
-                    console.error(`Download failed for ${l.topic_title}:`, data.message);
-                }
-
-                syncDownloadedFiles();
-            }
-
-            window.updateDownloadProgressModal({ status: "success", percent: 100 });
-            setTimeout(() => window.closeDownloadProgressModal(), 1500);
-
-            btnDownloadSelectedMp4.disabled = false;
-            btnDownloadSelectedMp4.innerHTML = `<i class="fa-solid fa-file-arrow-down"></i> Download Selected MP4s`;
         });
     }
-
-    // Multi-Link Batch Input Modal Handlers
-    const btnOpenMultiLinkModal = document.getElementById("btnOpenMultiLinkModal");
-    const multiLinkModal = document.getElementById("multiLinkModal");
-    const multiLinkCloseBtn = document.getElementById("multiLinkCloseBtn");
-    const btnMultiLinkCancel = document.getElementById("btnMultiLinkCancel");
-    const btnMultiLinkStart = document.getElementById("btnMultiLinkStart");
-
-    if (btnOpenMultiLinkModal && multiLinkModal) {
-        btnOpenMultiLinkModal.addEventListener("click", () => {
-            multiLinkModal.style.display = "flex";
-        });
-    }
-
-    const closeMultiLinkModal = () => {
-        if (multiLinkModal) multiLinkModal.style.display = "none";
-    };
-
-    if (multiLinkCloseBtn) multiLinkCloseBtn.addEventListener("click", closeMultiLinkModal);
-    if (btnMultiLinkCancel) btnMultiLinkCancel.addEventListener("click", closeMultiLinkModal);
 
     // Modern Download Manager Drawer Controls
     const floatingDlManagerBtn = document.getElementById("floatingDlManagerBtn");
@@ -1402,8 +1244,16 @@ document.addEventListener("DOMContentLoaded", () => {
     if (btnDrawerClose) btnDrawerClose.addEventListener("click", window.closeDownloadManagerDrawer);
 
     if (btnDrawerOpenFolder) {
-        btnDrawerOpenFolder.addEventListener("click", () => {
-            if (btnOpenDownloadsFolder) btnOpenDownloadsFolder.click();
+        btnDrawerOpenFolder.addEventListener("click", async () => {
+            try {
+                const res = await fetch("/api/open-downloads-folder");
+                const data = await res.json();
+                if (data.status !== "success") {
+                    alert("Could not open downloads folder: " + (data.message || "Unknown error"));
+                }
+            } catch (err) {
+                alert("Error opening downloads folder: " + (err.message || err));
+            }
         });
     }
 
@@ -1416,7 +1266,6 @@ document.addEventListener("DOMContentLoaded", () => {
     // Download Queue Manager System
     class DownloadQueueManager {
         constructor() {
-            self = this;
             this.activeQueue = [];
             this.completedQueue = [];
             this.maxConcurrent = 2;
@@ -1452,7 +1301,41 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         }
 
-        addToQueue(items) {
+        cancelTask(taskId) {
+            const task = this.activeQueue.find(t => t.id === taskId);
+            if (!task) return;
+
+            if (task.sse) {
+                try { task.sse.close(); } catch (_) {}
+                task.sse = null;
+            }
+
+            if (task.status === "downloading") {
+                this.runningCount = Math.max(0, this.runningCount - 1);
+            }
+
+            // Remove from active queue
+            this.activeQueue = this.activeQueue.filter(t => t.id !== taskId);
+            if (window.currentActiveTask && window.currentActiveTask.id === taskId) {
+                window.currentActiveTask = null;
+            }
+
+            // Reset row button if it was in the table
+            if (task.lectureIndex !== undefined) {
+                const btn = document.getElementById(`btnDlMp4_${task.lectureIndex}`);
+                if (btn) {
+                    btn.disabled = false;
+                    btn.className = "btn btn-sm btn-success btn-dl-mp4";
+                    btn.innerHTML = `<i class="fa-solid fa-file-arrow-down"></i> MP4`;
+                }
+            }
+
+            this.renderDrawer();
+            this.processNext();
+        }
+
+        addToQueue(items, openModal = false) {
+            const addedTasks = [];
             items.forEach(item => {
                 const task = {
                     id: 'dl_' + Math.random().toString(36).substr(2, 9),
@@ -1462,18 +1345,27 @@ document.addEventListener("DOMContentLoaded", () => {
                     topic_title: item.topic_title || "Topic",
                     lecture_number: item.lecture_number || 1,
                     quality: item.quality || "1080p",
+                    overwrite: item.overwrite || false,
+                    lectureIndex: item.lectureIndex,
                     status: "queued", // queued, downloading, success, error
                     percent: 0,
                     speed_str: "0.0 MB/s",
                     downloaded_mb: "0 MB",
                     total_mb: "0 MB",
                     eta: "Pending",
-                    file_name: `Topic ${(item.lecture_number || 1).toString().padStart(3, '0')} - ${item.topic_title}.mp4`
+                    file_name: item.file_name || `Topic ${(item.lecture_number || 1).toString().padStart(3, '0')} - ${item.topic_title}.mp4`,
+                    sse: null
                 };
                 this.activeQueue.push(task);
+                addedTasks.push(task);
             });
 
             this.renderDrawer();
+
+            if (openModal && addedTasks.length > 0) {
+                window.openDownloadProgressModalForTask(addedTasks[0]);
+            }
+
             this.processNext();
         }
 
@@ -1490,34 +1382,120 @@ document.addEventListener("DOMContentLoaded", () => {
             this.runningCount++;
             this.renderDrawer();
 
+            // If modal is open for this task, update title/state
+            const progressModal = document.getElementById("downloadProgressModal");
+            const isModalOpen = progressModal && progressModal.style.display !== "none";
+            if (isModalOpen && window.currentActiveTask && window.currentActiveTask.id === task.id) {
+                const modalStatusText = document.getElementById("dlModalStatusText");
+                if (modalStatusText) modalStatusText.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Downloading MP4 video stream...`;
+            }
+
+            // Update row button if visible in table
+            if (task.lectureIndex !== undefined) {
+                const btn = document.getElementById(`btnDlMp4_${task.lectureIndex}`);
+                if (btn) {
+                    btn.disabled = false;
+                    btn.onclick = () => window.openDownloadProgressModalForTask(task);
+                    btn.title = "Click to open live download progress";
+                    btn.className = "btn btn-sm btn-outline-primary btn-dl-mp4";
+                    btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ${task.percent || 0}%`;
+                }
+            }
+
             try {
-                const data = await downloadWithProgressStream({
+                const query = new URLSearchParams({
                     youtube_url: task.youtube_url,
                     course_name: task.course_name,
                     week: task.week,
                     topic_title: task.topic_title,
                     lecture_number: task.lecture_number,
-                    overwrite: true,
-                    quality: task.quality,
-                    onProgress: (progData) => {
-                        task.percent = progData.percent;
-                        task.speed_str = progData.speed_str;
-                        task.downloaded_mb = progData.downloaded_mb;
-                        task.total_mb = progData.total_mb;
-                        task.eta = progData.eta ? `${progData.eta}s` : "Calculating...";
-                        this.renderDrawer();
-                    }
+                    overwrite: task.overwrite ? "true" : "false",
+                    quality: task.quality
                 });
 
-                if (data.status === "success" || data.status === "already_exists") {
-                    task.status = "success";
-                    task.percent = 100;
-                    task.speed_str = "Complete";
-                    task.file_name = data.file_name || task.file_name;
-                    task.total_mb = data.total_mb || task.total_mb;
-                    this.totalDownloadedBytes += data.file_size || (data.downloaded_bytes || 25000000);
+                const sse = new EventSource(`/api/stream-download?${query.toString()}`);
+                task.sse = sse;
 
-                    // Mark corresponding lecture as downloaded
+                await new Promise((resolve) => {
+                    let resolved = false;
+                    const finish = (result) => {
+                        if (!resolved) {
+                            resolved = true;
+                            try { sse.close(); } catch (_) {}
+                            task.sse = null;
+                            resolve(result);
+                        }
+                    };
+
+                    sse.onmessage = (e) => {
+                        try {
+                            const data = JSON.parse(e.data);
+                            if (data.type === "progress") {
+                                task.percent = data.percent;
+                                task.speed_str = data.speed_str;
+                                task.downloaded_mb = data.downloaded_mb;
+                                task.total_mb = data.total_mb;
+                                task.eta = data.eta ? `${data.eta}s` : "Calculating...";
+
+                                // Update row button percentage
+                                if (task.lectureIndex !== undefined) {
+                                    const btn = document.getElementById(`btnDlMp4_${task.lectureIndex}`);
+                                    if (btn) {
+                                        btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ${task.percent}%`;
+                                    }
+                                }
+
+                                // Update modal if this task is active
+                                if (window.currentActiveTask && window.currentActiveTask.id === task.id) {
+                                    window.updateDownloadProgressModal({
+                                        status: "downloading",
+                                        percent: task.percent,
+                                        speed_str: task.speed_str,
+                                        downloaded_mb: task.downloaded_mb,
+                                        total_mb: task.total_mb,
+                                        eta: task.eta
+                                    });
+                                }
+
+                                this.renderDrawer();
+                            } else if (data.type === "complete" || data.status === "success") {
+                                task.status = "success";
+                                task.percent = 100;
+                                task.speed_str = "Complete";
+                                task.file_name = data.file_name || task.file_name;
+                                task.total_mb = data.total_mb || task.total_mb;
+                                this.totalDownloadedBytes += data.file_size || 25000000;
+
+                                if (window.currentActiveTask && window.currentActiveTask.id === task.id) {
+                                    window.updateDownloadProgressModal({ status: "success", percent: 100 });
+                                }
+
+                                finish({ status: "success", ...data });
+                            } else if (data.type === "already_exists" || data.status === "already_exists") {
+                                task.status = "success";
+                                task.percent = 100;
+                                task.speed_str = "Already on Disk";
+                                task.file_name = data.file_name || task.file_name;
+                                finish({ status: "already_exists", ...data });
+                            } else if (data.type === "error" || data.status === "error") {
+                                task.status = "error";
+                                task.error_msg = data.message || "Download failed";
+                                finish({ status: "error", message: data.message });
+                            }
+                        } catch (parseErr) {
+                            console.warn("[Download SSE Parse Error]", parseErr);
+                        }
+                    };
+
+                    sse.onerror = (err) => {
+                        task.status = "error";
+                        task.error_msg = "Connection lost during video download";
+                        finish({ status: "error" });
+                    };
+                });
+
+                if (task.status === "success") {
+                    // Update matching lecture in memory
                     const matchingLec = extractedLectures.find(l => 
                         (l.lecture_number === task.lecture_number && (l.week === task.week || !l.week)) ||
                         (l.topic_title && task.topic_title && l.topic_title.toLowerCase() === task.topic_title.toLowerCase())
@@ -1526,22 +1504,38 @@ document.addEventListener("DOMContentLoaded", () => {
                         matchingLec.is_downloaded = true;
                     }
 
+                    // Update row button to Downloaded
+                    if (task.lectureIndex !== undefined) {
+                        const btn = document.getElementById(`btnDlMp4_${task.lectureIndex}`);
+                        if (btn) {
+                            btn.disabled = false;
+                            btn.className = "btn btn-sm btn-outline-success btn-dl-mp4 downloaded";
+                            btn.innerHTML = `<i class="fa-solid fa-circle-check" style="color: #22c55e;"></i> Downloaded`;
+                            btn.onclick = () => window.downloadSingleMp4(task.lectureIndex);
+                        }
+                    }
+
                     // Move to completed queue
                     this.activeQueue = this.activeQueue.filter(t => t.id !== task.id);
                     this.completedQueue.unshift(task);
-
-                    // Sync files and refresh table
                     syncDownloadedFiles();
-                } else {
-                    task.status = "error";
-                    task.error_msg = data.message || "Failed";
+                } else if (task.status === "error") {
+                    if (task.lectureIndex !== undefined) {
+                        const btn = document.getElementById(`btnDlMp4_${task.lectureIndex}`);
+                        if (btn) {
+                            btn.disabled = false;
+                            btn.className = "btn btn-sm btn-danger btn-dl-mp4";
+                            btn.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Retry`;
+                            btn.onclick = () => window.downloadSingleMp4(task.lectureIndex);
+                        }
+                    }
                 }
             } catch (ex) {
                 task.status = "error";
                 task.error_msg = ex.message;
             }
 
-            this.runningCount--;
+            this.runningCount = Math.max(0, this.runningCount - 1);
             this.renderDrawer();
             this.processNext();
         }
@@ -1555,11 +1549,19 @@ document.addEventListener("DOMContentLoaded", () => {
             const drawerTotalDownloaded = document.getElementById("drawerTotalDownloaded");
             const activeQueueContainer = document.getElementById("drawerActiveQueue");
             const completedQueueContainer = document.getElementById("drawerCompletedQueue");
+            const floatingBtn = document.getElementById("floatingDlManagerBtn");
 
             const activeDownloading = this.activeQueue.filter(t => t.status === "downloading");
-            const queued = this.activeQueue.filter(t => t.status === "queued");
 
             if (activeBadge) activeBadge.textContent = this.activeQueue.length;
+            if (floatingBtn) {
+                if (this.activeQueue.length > 0) {
+                    floatingBtn.classList.add("has-active");
+                } else {
+                    floatingBtn.classList.remove("has-active");
+                }
+            }
+
             if (drawerActiveCount) drawerActiveCount.textContent = activeDownloading.length;
             if (drawerTotalCount) drawerTotalCount.textContent = this.activeQueue.length;
             if (drawerQueueVal) drawerQueueVal.textContent = `${this.completedQueue.length} / ${this.completedQueue.length + this.activeQueue.length}`;
@@ -1568,7 +1570,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const currentSpeed = activeDownloading.length > 0 ? activeDownloading[0].speed_str : "0.0 MB/s";
             if (drawerSpeedVal) drawerSpeedVal.textContent = currentSpeed;
 
-            // Render Active Queue Cards
+            // Render Active Queue Cards with Interactive Details and Cancel Buttons
             if (this.activeQueue.length === 0) {
                 if (activeQueueContainer) {
                     activeQueueContainer.innerHTML = `
@@ -1581,9 +1583,9 @@ document.addEventListener("DOMContentLoaded", () => {
             } else {
                 if (activeQueueContainer) {
                     activeQueueContainer.innerHTML = this.activeQueue.map(task => `
-                        <div class="queue-item-card ${task.status}">
+                        <div class="queue-item-card ${task.status}" id="card_${task.id}">
                             <div class="queue-item-header">
-                                <div class="queue-item-title">${escapeHtml(task.file_name)}</div>
+                                <div class="queue-item-title" title="${escapeHtml(task.file_name)}">${escapeHtml(task.file_name)}</div>
                                 <span class="yt-badge" style="background: rgba(99,102,241,0.2); color: #818cf8;">${task.quality}</span>
                             </div>
                             <div class="queue-item-meta">
@@ -1599,10 +1601,18 @@ document.addEventListener("DOMContentLoaded", () => {
                                     <div class="dl-progress-fill" style="width: ${task.percent}%;"></div>
                                 </div>
                             </div>
-                            <div style="display:flex; justify-content:space-between; font-size: 0.75rem; color: #94a3b8;">
+                            <div style="display:flex; justify-content:space-between; font-size: 0.75rem; color: #94a3b8; margin-bottom: 8px;">
                                 <span><i class="fa-solid fa-gauge-high"></i> ${task.speed_str}</span>
                                 <span><i class="fa-solid fa-hard-drive"></i> ${task.downloaded_mb} / ${task.total_mb}</span>
                                 <span><i class="fa-solid fa-stopwatch"></i> ETA: ${task.eta}</span>
+                            </div>
+                            <div class="queue-item-actions">
+                                <button class="btn-card-action" onclick="window.openDownloadProgressModalForTask(window.globalDownloadQueue.activeQueue.find(t=>t.id==='${task.id}'))" title="Open detailed progress modal">
+                                    <i class="fa-solid fa-up-right-and-down-left-from-center"></i> Details
+                                </button>
+                                <button class="btn-card-action danger" onclick="window.globalDownloadQueue.cancelTask('${task.id}')" title="Cancel download">
+                                    <i class="fa-solid fa-xmark"></i> Cancel
+                                </button>
                             </div>
                         </div>
                     `).join('');
@@ -1645,45 +1655,232 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    // Handle Custom Multi-Link Start Button
+    // Unified Single MP4 Video Downloader
+    window.downloadSingleMp4 = async function(index, overwrite = false) {
+        const filtered = getFilteredLectures();
+        const lecture = filtered[index] || extractedLectures[index];
+        if (!lecture || !lecture.youtube_url || !lecture.youtube_url.startsWith("https://www.youtube.com")) {
+            alert("No valid YouTube video link found for this topic.");
+            return;
+        }
+
+        const courseSelect = document.getElementById("courseSelect");
+        const qualitySelect = document.getElementById("qualitySelect");
+        let selectedCourseTitle = "";
+        if (courseSelect && courseSelect.selectedIndex >= 0) {
+            selectedCourseTitle = courseSelect.options[courseSelect.selectedIndex].text || "";
+        }
+        const selectedQuality = qualitySelect ? qualitySelect.value : "1080p";
+        const fileName = `Topic ${(lecture.lecture_number || index + 1).toString().padStart(3, '0')} - ${lecture.topic_title}.mp4`;
+
+        // Check if video already exists on disk
+        if (!overwrite && isLectureDownloaded(lecture, index)) {
+            window.showOverwriteModal(fileName, (shouldOverwrite) => {
+                if (shouldOverwrite) {
+                    window.downloadSingleMp4(index, true);
+                }
+            });
+            return;
+        }
+
+        const taskItem = {
+            youtube_url: lecture.youtube_url,
+            course_name: lecture.course_name || selectedCourseTitle || "Course",
+            week: lecture.week || "Week 01",
+            topic_title: lecture.topic_title || "Topic",
+            lecture_number: lecture.lecture_number || (index + 1),
+            quality: selectedQuality,
+            overwrite: overwrite,
+            lectureIndex: index,
+            file_name: fileName
+        };
+
+        // Queue in unified queue and open modal
+        window.globalDownloadQueue.addToQueue([taskItem], true);
+    };
+
+    // Batch Selected MP4 Video Downloader
+    const btnDownloadSelectedMp4 = document.getElementById("btnDownloadSelectedMp4");
+    if (btnDownloadSelectedMp4) {
+        btnDownloadSelectedMp4.addEventListener("click", () => {
+            const filtered = getFilteredLectures();
+            const selectedLectures = Array.from(selectedIndices).map(i => ({
+                lecture: filtered[i],
+                index: i
+            })).filter(item => item.lecture && item.lecture.youtube_url && item.lecture.youtube_url.startsWith("https://www.youtube.com"));
+
+            if (selectedLectures.length === 0) {
+                alert("No valid YouTube video links selected for download.");
+                return;
+            }
+
+            const courseSelect = document.getElementById("courseSelect");
+            const qualitySelect = document.getElementById("qualitySelect");
+            let selectedCourseTitle = "";
+            if (courseSelect && courseSelect.selectedIndex >= 0) {
+                selectedCourseTitle = courseSelect.options[courseSelect.selectedIndex].text || "";
+            }
+            const selectedQuality = qualitySelect ? qualitySelect.value : "1080p";
+
+            const tasks = selectedLectures.map(item => {
+                const l = item.lecture;
+                return {
+                    youtube_url: l.youtube_url,
+                    course_name: l.course_name || selectedCourseTitle || "Course",
+                    week: l.week || "Week 01",
+                    topic_title: l.topic_title || "Topic",
+                    lecture_number: l.lecture_number || (item.index + 1),
+                    quality: selectedQuality,
+                    overwrite: false,
+                    lectureIndex: item.index,
+                    file_name: `Topic ${(l.lecture_number || item.index + 1).toString().padStart(3, '0')} - ${l.topic_title}.mp4`
+                };
+            });
+
+            // Add all to queue, open drawer, show notification
+            window.globalDownloadQueue.addToQueue(tasks, false);
+            window.openDownloadManagerDrawer();
+            window.showDownloadToast(`Queued ${tasks.length} selected videos for download!`);
+        });
+    }
+
+    // Multi-Link Batch Input Modal Handlers & Enhancements
+    const btnOpenMultiLinkModal = document.getElementById("btnOpenMultiLinkModal");
+    const multiLinkModal = document.getElementById("multiLinkModal");
+    const multiLinkCloseBtn = document.getElementById("multiLinkCloseBtn");
+    const btnMultiLinkCancel = document.getElementById("btnMultiLinkCancel");
+    const btnMultiLinkStart = document.getElementById("btnMultiLinkStart");
+    const multiLinkTextArea = document.getElementById("multiLinkTextArea");
+    const multiLinkCountBadge = document.getElementById("multiLinkCountBadge");
+    const multiLinkBtnCount = document.getElementById("multiLinkBtnCount");
+    const btnMultiLinkPaste = document.getElementById("btnMultiLinkPaste");
+    const btnMultiLinkSample = document.getElementById("btnMultiLinkSample");
+    const btnMultiLinkClear = document.getElementById("btnMultiLinkClear");
+
+    function parseMultiLinkUrls() {
+        if (!multiLinkTextArea) return [];
+        const raw = multiLinkTextArea.value || "";
+        return raw.split('\n')
+            .map(u => u.trim())
+            .filter(u => u.length > 5 && (u.includes("youtube.com") || u.includes("youtu.be")));
+    }
+
+    function updateMultiLinkCounter() {
+        const urls = parseMultiLinkUrls();
+        const count = urls.length;
+        if (multiLinkCountBadge) {
+            multiLinkCountBadge.textContent = `${count} Links Detected`;
+            if (count > 0) {
+                multiLinkCountBadge.classList.add("has-urls");
+            } else {
+                multiLinkCountBadge.classList.remove("has-urls");
+            }
+        }
+        if (multiLinkBtnCount) {
+            multiLinkBtnCount.textContent = count;
+        }
+    }
+
+    if (multiLinkTextArea) {
+        multiLinkTextArea.addEventListener("input", updateMultiLinkCounter);
+    }
+
+    if (btnMultiLinkPaste) {
+        btnMultiLinkPaste.addEventListener("click", async () => {
+            try {
+                const clipText = await navigator.clipboard.readText();
+                if (clipText) {
+                    if (multiLinkTextArea.value.trim().length > 0) {
+                        multiLinkTextArea.value += "\n" + clipText.trim();
+                    } else {
+                        multiLinkTextArea.value = clipText.trim();
+                    }
+                    updateMultiLinkCounter();
+                }
+            } catch (err) {
+                alert("Clipboard access was blocked. Please paste manually into the text box.");
+            }
+        });
+    }
+
+    if (btnMultiLinkSample) {
+        btnMultiLinkSample.addEventListener("click", () => {
+            if (multiLinkTextArea) {
+                multiLinkTextArea.value = [
+                    "https://www.youtube.com/watch?v=CmVkzhiHSWw",
+                    "https://www.youtube.com/watch?v=8FocZfKN67g",
+                    "https://www.youtube.com/watch?v=xBORP6maPYI"
+                ].join('\n');
+                updateMultiLinkCounter();
+            }
+        });
+    }
+
+    if (btnMultiLinkClear) {
+        btnMultiLinkClear.addEventListener("click", () => {
+            if (multiLinkTextArea) {
+                multiLinkTextArea.value = "";
+                updateMultiLinkCounter();
+            }
+        });
+    }
+
+    if (btnOpenMultiLinkModal && multiLinkModal) {
+        btnOpenMultiLinkModal.addEventListener("click", () => {
+            const courseSelect = document.getElementById("courseSelect");
+            const courseInput = document.getElementById("multiLinkCourseFolder");
+            if (courseSelect && courseSelect.selectedIndex >= 0 && courseInput) {
+                const currentName = courseSelect.options[courseSelect.selectedIndex].text;
+                if (currentName && !currentName.includes("--")) {
+                    courseInput.value = currentName.trim();
+                }
+            }
+            updateMultiLinkCounter();
+            multiLinkModal.style.display = "flex";
+        });
+    }
+
+    const closeMultiLinkModal = () => {
+        if (multiLinkModal) multiLinkModal.style.display = "none";
+    };
+
+    if (multiLinkCloseBtn) multiLinkCloseBtn.addEventListener("click", closeMultiLinkModal);
+    if (btnMultiLinkCancel) btnMultiLinkCancel.addEventListener("click", closeMultiLinkModal);
+
+    // Multi-Link Start Queue Button
     if (btnMultiLinkStart) {
         btnMultiLinkStart.addEventListener("click", () => {
-            const textArea = document.getElementById("multiLinkTextArea");
+            const urls = parseMultiLinkUrls();
+            if (urls.length === 0) {
+                alert("Please enter or paste at least one valid YouTube video URL.");
+                return;
+            }
+
             const courseInput = document.getElementById("multiLinkCourseFolder");
             const weekInput = document.getElementById("multiLinkWeekFolder");
-            const qualitySelect = document.getElementById("qualitySelect");
-
-            const rawText = textArea ? textArea.value.trim() : "";
-            if (!rawText) {
-                alert("Please enter at least one YouTube video URL.");
-                return;
-            }
-
-            const urls = rawText.split('\n')
-                .map(u => u.trim())
-                .filter(u => u.length > 5 && (u.includes("youtube.com") || u.includes("youtu.be")));
-
-            if (urls.length === 0) {
-                alert("No valid YouTube URLs found. Please check your links.");
-                return;
-            }
+            const qualitySelect = document.getElementById("multiLinkQualitySelect") || document.getElementById("qualitySelect");
+            const skipExisting = document.getElementById("multiLinkSkipExisting");
 
             const cName = courseInput ? courseInput.value.trim() || "Custom Course" : "Custom Course";
             const weekName = weekInput ? weekInput.value.trim() || "Week 01" : "Week 01";
-            const quality = qualitySelect ? qualitySelect.value : "1080p";
+            const quality = qualitySelect ? qualitySelect.value : "720p";
+            const doSkip = skipExisting ? skipExisting.checked : true;
 
-            const items = urls.map((url, idx) => ({
+            const tasks = urls.map((url, idx) => ({
                 youtube_url: url,
                 course_name: cName,
                 week: weekName,
                 topic_title: `Custom Video ${idx + 1}`,
                 lecture_number: idx + 1,
-                quality: quality
+                quality: quality,
+                overwrite: !doSkip,
+                file_name: `Video ${(idx + 1).toString().padStart(3, '0')}.mp4`
             }));
 
-            window.globalDownloadQueue.addToQueue(items);
+            window.globalDownloadQueue.addToQueue(tasks, false);
             closeMultiLinkModal();
             window.openDownloadManagerDrawer();
+            window.showDownloadToast(`Queued ${tasks.length} videos from Multi-Link Downloader!`);
         });
     }
 

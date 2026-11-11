@@ -320,12 +320,20 @@
                         </span>
                         <h3 id="dlModalTitle">Downloading Lecture Video</h3>
                     </div>
-                    <button id="dlModalCloseBtn" class="modal-close-btn">&times;</button>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <button id="btnDlModalMinimize" class="modal-btn-icon" title="Minimize / Run in Background (Keep downloading in background)">
+                            <i class="fa-solid fa-window-minimize"></i>
+                        </button>
+                        <button id="dlModalCloseBtn" class="modal-close-btn" title="Close / Run in Background">&times;</button>
+                    </div>
                 </div>
                 <div class="video-modal-body" style="padding: 24px;">
                     <!-- Active File Info -->
                     <div class="dl-active-file-info">
-                        <div class="dl-file-name" id="dlModalFileName">Topic 001 - Course Introduction.mp4</div>
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 6px;">
+                            <div class="dl-file-name" id="dlModalFileName">Topic 001 - Course Introduction.mp4</div>
+                            <span class="yt-badge" id="dlModalQualityBadge" style="background: rgba(168, 85, 247, 0.2); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); white-space: nowrap;">720p HD</span>
+                        </div>
                         <div class="dl-file-meta" id="dlModalMetaInfo">
                             <span><i class="fa-solid fa-folder"></i> <span id="dlModalCourseFolder">Course</span></span>
                             <span><i class="fa-solid fa-layer-group"></i> <span id="dlModalWeekFolder">Week 01</span></span>
@@ -380,31 +388,61 @@
                             <div id="dlBatchProgressBarFill" class="dl-progress-fill" style="width: 0%; background: linear-gradient(90deg, #10b981, #3b82f6);"></div>
                         </div>
                     </div>
+
+                    <!-- Modal Action Controls -->
+                    <div class="dl-modal-footer-actions">
+                        <button id="btnDlModalCancel" class="btn btn-sm btn-danger-outline" title="Cancel this download">
+                            <i class="fa-solid fa-ban"></i> Cancel Download
+                        </button>
+                        <div style="display: flex; gap: 8px;">
+                            <button id="btnDlModalBackground" class="btn btn-sm btn-outline" title="Continue downloading in background">
+                                <i class="fa-solid fa-window-minimize"></i> Run in Background
+                            </button>
+                            <button id="btnDlModalOpenDrawer" class="btn btn-sm btn-primary" title="Open Download Manager Drawer">
+                                <i class="fa-solid fa-cloud-arrow-down"></i> Download Manager
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
 
         <!-- Multi-Link Batch Input Modal -->
         <div id="multiLinkModal" class="video-modal-backdrop" style="display: none;">
-            <div class="video-modal-card" style="max-width: 650px; width: 92%;">
+            <div class="video-modal-card" style="max-width: 680px; width: 92%;">
                 <div class="video-modal-header">
                     <div class="modal-title-wrap">
                         <span class="yt-badge" style="background: rgba(99, 102, 241, 0.2); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.4);">
                             <i class="fa-solid fa-list-check"></i> Multi-Link Downloader
                         </span>
-                        <h3>Paste Custom YouTube Video URLs</h3>
+                        <h3>Custom Batch Video Downloader</h3>
                     </div>
                     <button id="multiLinkCloseBtn" class="modal-close-btn">&times;</button>
                 </div>
-                <div class="video-modal-body" style="padding: 20px;">
-                    <div style="margin-bottom: 14px;">
-                        <label style="font-size: 0.85rem; color: #94a3b8; margin-bottom: 6px; display: block;">
-                            Enter YouTube URLs (one URL per line):
+                <div class="video-modal-body" style="padding: 22px;">
+                    <div class="multi-link-toolbar">
+                        <label style="font-size: 0.85rem; color: #cbd5e1; font-weight: 500; margin: 0;">
+                            Paste YouTube Video URLs (one per line):
                         </label>
-                        <textarea id="multiLinkTextArea" class="form-control" rows="6" placeholder="https://www.youtube.com/watch?v=CmVkzhiHSWw&#10;https://www.youtube.com/watch?v=8FocZfKN67g&#10;https://www.youtube.com/watch?v=xBORP6maPYI" style="font-family: monospace; font-size: 13px;"></textarea>
+                        <div class="multi-link-shortcuts">
+                            <button type="button" id="btnMultiLinkPaste" class="btn-card-action" title="Paste text from clipboard">
+                                <i class="fa-solid fa-paste"></i> Paste
+                            </button>
+                            <button type="button" id="btnMultiLinkSample" class="btn-card-action" title="Load sample YouTube URLs">
+                                <i class="fa-solid fa-lightbulb"></i> Sample
+                            </button>
+                            <button type="button" id="btnMultiLinkClear" class="btn-card-action danger" title="Clear all entered URLs">
+                                <i class="fa-solid fa-eraser"></i> Clear
+                            </button>
+                            <span id="multiLinkCountBadge" class="multi-link-badge">0 Links Detected</span>
+                        </div>
                     </div>
 
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 18px;">
+                    <div style="margin-bottom: 14px; position: relative;">
+                        <textarea id="multiLinkTextArea" class="form-control" rows="6" placeholder="https://www.youtube.com/watch?v=CmVkzhiHSWw&#10;https://www.youtube.com/watch?v=8FocZfKN67g&#10;https://www.youtube.com/watch?v=xBORP6maPYI" style="font-family: 'Consolas', monospace; font-size: 13px; line-height: 1.5; resize: vertical;"></textarea>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 16px;">
                         <div>
                             <label style="font-size: 0.8rem; color: #94a3b8; display: block; margin-bottom: 4px;">Target Course Folder</label>
                             <input type="text" id="multiLinkCourseFolder" class="form-control form-control-sm" placeholder="Custom Course" value="Downloaded Videos" />
@@ -413,13 +451,30 @@
                             <label style="font-size: 0.8rem; color: #94a3b8; display: block; margin-bottom: 4px;">Target Week Folder</label>
                             <input type="text" id="multiLinkWeekFolder" class="form-control form-control-sm" placeholder="Week 01" value="Batch Downloads" />
                         </div>
+                        <div>
+                            <label style="font-size: 0.8rem; color: #94a3b8; display: block; margin-bottom: 4px;">Download Quality</label>
+                            <select id="multiLinkQualitySelect" class="form-select form-select-sm">
+                                <option value="1080p">1080p Full HD (MP4)</option>
+                                <option value="720p" selected>720p HD (MP4)</option>
+                                <option value="best">Best Available (MP4)</option>
+                                <option value="480p">480p SD (Fast)</option>
+                                <option value="360p">360p Low (Compact)</option>
+                                <option value="audio">Audio Only (M4A)</option>
+                            </select>
+                        </div>
                     </div>
 
-                    <div style="display: flex; gap: 10px; justify-content: flex-end;">
-                        <button id="btnMultiLinkCancel" class="btn btn-secondary">Cancel</button>
-                        <button id="btnMultiLinkStart" class="btn btn-primary btn-glow">
-                            <i class="fa-solid fa-cloud-arrow-down"></i> Add to Download Queue
-                        </button>
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08);">
+                        <label style="font-size: 0.82rem; color: #94a3b8; display: flex; align-items: center; gap: 8px; cursor: pointer; margin: 0;">
+                            <input type="checkbox" id="multiLinkSkipExisting" checked style="cursor: pointer;" />
+                            <span>Skip videos already downloaded on disk</span>
+                        </label>
+                        <div style="display: flex; gap: 10px;">
+                            <button id="btnMultiLinkCancel" class="btn btn-secondary">Cancel</button>
+                            <button id="btnMultiLinkStart" class="btn btn-primary btn-glow">
+                                <i class="fa-solid fa-cloud-arrow-down"></i> Queue Downloads (<span id="multiLinkBtnCount">0</span>)
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
