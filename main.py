@@ -448,6 +448,31 @@ async def open_downloads_folder():
         return JSONResponse(status_code=500, content={"status": "error", "message": str(ex)})
 
 
+def get_mp4_resolution(file_path: Path) -> Optional[str]:
+    """Parses MP4 tkhd atom instantly in binary mode to extract video resolution height (e.g. 720p, 1080p)."""
+    try:
+        with open(file_path, "rb") as f:
+            data = f.read(500000)
+        pos = 0
+        while True:
+            idx = data.find(b"tkhd", pos)
+            if idx == -1:
+                break
+            ver = data[idx + 4]
+            if ver == 0 and len(data) >= idx + 88:
+                h = int.from_bytes(data[idx + 84:idx + 86], "big")
+                if h > 0:
+                    return f"{h}p"
+            elif ver == 1 and len(data) >= idx + 100:
+                h = int.from_bytes(data[idx + 96:idx + 98], "big")
+                if h > 0:
+                    return f"{h}p"
+            pos = idx + 4
+    except Exception:
+        pass
+    return None
+
+
 @app.get("/api/scan-downloads-folder")
 async def scan_downloads_folder():
     """Scans the downloads folder and returns all existing downloaded video files with rich metadata."""
@@ -462,13 +487,15 @@ async def scan_downloads_folder():
                     rel_parts = p.relative_to(downloads_dir).parts
                     c_name = rel_parts[0] if len(rel_parts) > 1 else "Downloads"
                     w_name = rel_parts[1] if len(rel_parts) > 2 else "Week"
+                    res = get_mp4_resolution(p)
                     files.append({
                         "file_name": p.name,
                         "file_path": str(p),
                         "file_size_mb": round(stat.st_size / (1024 * 1024), 1),
                         "file_size_bytes": stat.st_size,
                         "course_name": c_name,
-                        "week": w_name
+                        "week": w_name,
+                        "resolution": res
                     })
         return JSONResponse({"status": "success", "files": files})
     except Exception as ex:

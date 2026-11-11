@@ -81,9 +81,9 @@ document.addEventListener("DOMContentLoaded", () => {
         return m ? `week ${m[0].padStart(2, '0')}`.toLowerCase() : w.trim().toLowerCase();
     }
 
-    function isLectureDownloaded(l, index) {
+    function isLectureDownloaded(l, index, targetQuality = null) {
         if (!l) return false;
-        if (l.is_downloaded === true) return true;
+        if (l.is_downloaded === true && !targetQuality) return true;
 
         const currentCourse = (l.course_name || (courseSelect && courseSelect.selectedIndex >= 0 ? courseSelect.options[courseSelect.selectedIndex].text : "") || "").trim();
         const cleanCourse = cleanCourseTitle(currentCourse).toLowerCase();
@@ -91,10 +91,14 @@ document.addEventListener("DOMContentLoaded", () => {
         const topicTitle = (l.topic_title || "").toLowerCase();
         const lecNum = l.lecture_number || (index !== undefined ? index + 1 : null);
 
+        // Normalize target resolution (e.g. "1080p", "720p", "480p", "360p")
+        const reqQuality = targetQuality ? targetQuality.toLowerCase().trim() : null;
+
         return downloadedDiskFiles.some(f => {
             const fName = (f.file_name || "").toLowerCase();
             const fCourse = (f.course_name || "").toLowerCase();
             const fWeek = normalizeWeek(f.week || "");
+            const fRes = (f.resolution || "").toLowerCase().trim();
 
             // 1. Must match the course
             const courseMatches = !cleanCourse || fCourse.includes(cleanCourse) || cleanCourse.includes(fCourse);
@@ -104,23 +108,36 @@ document.addEventListener("DOMContentLoaded", () => {
             if (fWeek !== lectureWeek) return false;
 
             // 3. Match within the same course and week:
+            let isSameLecture = false;
+
             // Check Topic number prefix e.g. "Topic 001" or "Topic 1"
             if (lecNum !== null) {
                 const numPadded = `topic ${lecNum.toString().padStart(3, '0')}`.toLowerCase();
                 const numSimple = `topic ${lecNum}`.toLowerCase();
                 if (fName.startsWith(numPadded) || fName.startsWith(numSimple)) {
-                    return true;
+                    isSameLecture = true;
                 }
             }
 
             // Check title slug substring
-            const cleanTitleSlug = sanitizeTitleForCompare(topicTitle);
-            const fNameSlug = sanitizeTitleForCompare(fName);
-            if (cleanTitleSlug && cleanTitleSlug.length > 5 && fNameSlug.includes(cleanTitleSlug)) {
-                return true;
+            if (!isSameLecture) {
+                const cleanTitleSlug = sanitizeTitleForCompare(topicTitle);
+                const fNameSlug = sanitizeTitleForCompare(fName);
+                if (cleanTitleSlug && cleanTitleSlug.length > 5 && fNameSlug.includes(cleanTitleSlug)) {
+                    isSameLecture = true;
+                }
             }
 
-            return false;
+            if (!isSameLecture) return false;
+
+            // 4. Resolution check: if checking for a specific resolution, verify resolution match
+            if (reqQuality && reqQuality !== "best") {
+                if (fRes && fRes !== reqQuality) {
+                    return false; // Found file on disk, but resolution is different (e.g. 360p vs 720p)
+                }
+            }
+
+            return true;
         });
     }
 
@@ -1681,8 +1698,8 @@ document.addEventListener("DOMContentLoaded", () => {
         const selectedQuality = qualitySelect ? qualitySelect.value : "1080p";
         const fileName = `Topic ${(lecture.lecture_number || index + 1).toString().padStart(3, '0')} - ${lecture.topic_title}.mp4`;
 
-        // Check if video already exists on disk
-        if (!overwrite && isLectureDownloaded(lecture, index)) {
+        // Check if video already exists on disk with the same requested resolution
+        if (!overwrite && isLectureDownloaded(lecture, index, selectedQuality)) {
             window.showOverwriteModal(fileName, (shouldOverwrite) => {
                 if (shouldOverwrite) {
                     window.downloadSingleMp4(index, true);
@@ -1730,9 +1747,17 @@ document.addEventListener("DOMContentLoaded", () => {
             }
             const selectedQuality = qualitySelect ? qualitySelect.value : "1080p";
 
-            const tasks = selectedLectures.map(item => {
+            // Filter out videos that are already downloaded with the same resolution (unless user specifically requests overwrite)
+            const tasksToQueue = [];
+            let skippedCount = 0;
+
+            selectedLectures.forEach(item => {
                 const l = item.lecture;
-                return {
+                if (isLectureDownloaded(l, item.index, selectedQuality)) {
+                    skippedCount++;
+                    return;
+                }
+                tasksToQueue.push({
                     youtube_url: l.youtube_url,
                     course_name: l.course_name || selectedCourseTitle || "Course",
                     week: l.week || "Week 01",
@@ -1742,13 +1767,19 @@ document.addEventListener("DOMContentLoaded", () => {
                     overwrite: false,
                     lectureIndex: item.index,
                     file_name: `Topic ${(l.lecture_number || item.index + 1).toString().padStart(3, '0')} - ${l.topic_title}.mp4`
-                };
+                });
             });
 
-            // Add all to queue, open drawer, show notification
-            window.globalDownloadQueue.addToQueue(tasks, false);
+            if (tasksToQueue.length === 0) {
+                alert(`All ${selectedLectures.length} selected video(s) are already downloaded in ${selectedQuality}! Nothing to download.`);
+                return;
+            }
+
+            // Add new tasks to queue, open drawer, show notification
+            window.globalDownloadQueue.addToQueue(tasksToQueue, false);
             window.openDownloadManagerDrawer();
-            window.showDownloadToast(`Queued ${tasks.length} selected videos for download!`);
+            const skipMsg = skippedCount > 0 ? ` (${skippedCount} already downloaded in ${selectedQuality} skipped)` : "";
+            window.showDownloadToast(`Queued ${tasksToQueue.length} video(s) for download!${skipMsg}`);
         });
     }
 
